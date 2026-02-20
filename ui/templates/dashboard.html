@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enterprise Log Anomaly Detection System</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script>
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            const label = document.querySelector('.file-input-label');
+            if (file && label) {
+                label.textContent = file.name;
+            }
+        }
+
+        function submitDetection(event) {
+            event.preventDefault();
+            
+            const form = event.target;
+            const fileInput = form.querySelector('input[type="file"]');
+            const modelInput = form.querySelector('input[name="model"]:checked');
+            
+            // Check if we need a new file upload
+            const hasCurrentFile = document.querySelector('.alert-success');
+            
+            console.log('Submit detection:', {
+                hasCurrentFile: !!hasCurrentFile,
+                hasFileInput: !!fileInput,
+                hasFiles: fileInput ? fileInput.files.length : 0,
+                model: modelInput ? modelInput.value : null
+            });
+            
+            if (!hasCurrentFile && (!fileInput || !fileInput.files.length)) {
+                alert('Please select a file');
+                return;
+            }
+            
+            if (!modelInput) {
+                alert('Please select a model');
+                return;
+            }
+            
+            const formData = new FormData();
+            
+            // Only append file if we're uploading a new one
+            if (fileInput && fileInput.files.length > 0) {
+                formData.append('file', fileInput.files[0]);
+                console.log('Appending new file:', fileInput.files[0].name);
+            }
+            
+            formData.append('model', modelInput.value);
+            
+            // If re-running detection on existing file, add flag
+            if (hasCurrentFile) {
+                formData.append('rerun', 'true');
+                console.log('Re-running detection on existing file');
+            }
+            
+            const btn = form.querySelector('button[type="submit"]');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="loading"></span> Processing...';
+            
+            fetch('/detect', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => {
+                console.log('Response status:', response.status);
+                if (!response.ok) {
+                    return response.json().then(data => {
+                        throw new Error(data.error || `HTTP error! status: ${response.status}`);
+                    });
+                }
+                return response.json();
+            })
+            .then(data => {
+                console.log('Response data:', data);
+                if (data.success) {
+                    location.reload();
+                } else {
+                    alert('Error: ' + (data.error || 'Unknown error'));
+                    btn.disabled = false;
+                    btn.innerHTML = 'Run Detection';
+                }
+            })
+            .catch(error => {
+                console.error('Fetch error:', error);
+                alert('Error: ' + error.message);
+                btn.disabled = false;
+                btn.innerHTML = 'Run Detection';
+            });
+        }
+
+        function uploadNewFile() {
+            // Clear session and reload to show file upload
+            fetch('/clear-session', {
+                method: 'POST'
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    window.location.href = '/';
+                }
+            })
+            .catch(error => {
+                console.error('Error clearing session:', error);
+                window.location.href = '/';
+            });
+        }
+
+        function filterBySeverity(severity) {
+            const rows = document.querySelectorAll('.results-table tbody tr');
+            rows.forEach(row => {
+                const badgeText = row.querySelector('.severity-badge').textContent.toLowerCase().trim();
+                if (severity === 'all' || badgeText === severity.toLowerCase()) {
+                    row.style.display = '';
+                } else {
+                    row.style.display = 'none';
+                }
+            });
+        }
+
+        window.addEventListener('load', () => {
+            const fileInput = document.querySelector('input[type="file"]');
+            if (fileInput) {
+                fileInput.addEventListener('change', handleFileSelect);
+            }
+
+            const form = document.querySelector('.upload-form');
+            if (form) {
+                form.addEventListener('submit', submitDetection);
+            }
+        });
+    </script>
+</head>
+<body>
+    <div class="header">
+        <h1>🔍 Enterprise Log Anomaly Detection</h1>
+        <p>Machine Learning-based anomaly detection for server and application logs</p>
+    </div>
+
+    <div class="main-content container">
+        {% if session_data %}
+            <div class="layout">
+                <!-- Left Panel: Upload & Model Selection -->
+                <div class="panel">
+                    <div class="panel-header">📁 Analysis Setup</div>
+                    <div class="panel-body">
+                        <form class="upload-form">
+                            {% if session_data.get('current_file') %}
+                                <div class="alert alert-success">
+                                    ✓ File loaded: <strong>{{ session_data['current_file'] }}</strong>
+                                </div>
+                                <div style="margin-top: 10px;">
+                                    <button type="button" class="btn btn-secondary" onclick="uploadNewFile()" style="width: 100%; padding: 8px;">
+                                        📤 Upload New File
+                                    </button>
+                                </div>
+                            {% else %}
+                                <div class="form-group">
+                                    <label>📤 Upload Log or CSV File</label>
+                                    <div class="file-input-wrapper">
+                                        <input type="file" id="file-input" accept=".log,.csv,.txt" required>
+                                        <label for="file-input" class="file-input-label">Click to select file (.log, .csv, .txt)</label>
+                                    </div>
+                                </div>
+                            {% endif %}
+
+                            <div class="form-group">
+                                <label>🤖 Detection Model</label>
+                                <div class="model-selector">
+                                    <div class="model-option">
+                                        <input type="radio" id="iso-forest" name="model" value="isolation_forest" {% if session_data.get('current_model') != 'autoencoder' %}checked{% endif %} required>
+                                        <label for="iso-forest">
+                                            <div>Isolation Forest</div>
+                                            <small style="opacity: 0.7;">Statistical</small>
+                                        </label>
+                                    </div>
+                                    <div class="model-option">
+                                        <input type="radio" id="autoenc" name="model" value="autoencoder" {% if session_data.get('current_model') == 'autoencoder' %}checked{% endif %} required>
+                                        <label for="autoenc">
+                                            <div>Autoencoder</div>
+                                            <small style="opacity: 0.7;">Deep Learning</small>
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <button type="submit" class="btn btn-primary" style="width: 100%;">
+                                {% if session_data.get('results') %}
+                                    🔄 Re-run Detection
+                                {% else %}
+                                    ▶ Run Detection
+                                {% endif %}
+                            </button>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Right Panel: Dashboard -->
+                <div class="panel">
+                    {% if session_data.get('stats') %}
+                        <div class="panel-header">📊 Detection Dashboard</div>
+                        <div class="panel-body">
+                            {% set stats = session_data['stats'] %}
+                            
+                            <!-- Statistics Cards -->
+                            <div class="stats-grid">
+                                <div class="stat-card">
+                                    <div class="stat-label">Total Records</div>
+                                    <div class="stat-value">{{ stats['total_records'] }}</div>
+                                </div>
+                                <div class="stat-card">
+                                    <div class="stat-label">Anomalies Found</div>
+                                    <div class="stat-value" style="color: {% if stats['total_anomalies'] > 0 %}#dc3545{% else %}#28a745{% endif %};">
+                                        {{ stats['total_anomalies'] }}
+                                    </div>
+                                </div>
+                                <div class="stat-card">
+                                    <div class="stat-label">Anomaly Rate</div>
+                                    <div class="stat-value">{{ "%.1f"|format(stats['anomaly_percentage']) }}%</div>
+                                </div>
+                                <div class="stat-card">
+                                    <div class="stat-label">Detection Model</div>
+                                    <div class="stat-value" style="font-size: 16px;">
+                                        {% if stats['model'] == 'isolation_forest' %}
+                                            Isolation Forest
+                                        {% else %}
+                                            Autoencoder
+                                        {% endif %}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Severity Distribution -->
+                            <div style="margin-top: 20px;">
+                                <div style="font-weight: 600; margin-bottom: 12px;">Severity Distribution</div>
+                                <div class="severity-bars">
+                                    {% for severity in ['critical', 'high', 'medium', 'low', 'normal'] %}
+                                        <div class="severity-bar severity-{{ severity }}">
+                                            <div class="severity-label">{{ severity }}</div>
+                                            <div class="severity-bar-container">
+                                                {% if stats['total_records'] > 0 %}
+                                                    <div class="severity-bar-fill" style="width: {{ 100 * stats['severity_distribution'][severity] / stats['total_records'] }}%"></div>
+                                                {% endif %}
+                                            </div>
+                                            <div class="severity-count">{{ stats['severity_distribution'][severity] }}</div>
+                                        </div>
+                                    {% endfor %}
+                                </div>
+                            </div>
+                            
+                            <!-- Threat Type Distribution -->
+                            {% if stats.get('threat_type_distribution') %}
+                            <div style="margin-top: 20px;">
+                                <div style="font-weight: 600; margin-bottom: 12px;">Threat Types Detected</div>
+                                <div style="font-size: 12px;">
+                                    {% for threat_type, count in stats['threat_type_distribution'].items() %}
+                                        <div style="padding: 4px 0; display: flex; justify-content: space-between;">
+                                            <span>{{ threat_type }}</span>
+                                            <span style="font-weight: 600;">{{ count }}</span>
+                                        </div>
+                                    {% endfor %}
+                                </div>
+                            </div>
+                            {% endif %}
+                            
+                            <!-- Detection Layer Distribution -->
+                            {% if stats.get('detection_layer_distribution') %}
+                            <div style="margin-top: 20px;">
+                                <div style="font-weight: 600; margin-bottom: 12px;">Detection Layers</div>
+                                <div style="font-size: 12px;">
+                                    {% for layer, count in stats['detection_layer_distribution'].items() %}
+                                        <div style="padding: 4px 0; display: flex; justify-content: space-between;">
+                                            <span>{{ layer }}</span>
+                                            <span style="font-weight: 600;">{{ count }}</span>
+                                        </div>
+                                    {% endfor %}
+                                </div>
+                            </div>
+                            {% endif %}
+                            
+                            <!-- Attack Campaigns (Correlation Findings) -->
+                            {% if stats.get('correlation_findings') and stats['correlation_findings'].get('total_campaigns') > 0 %}
+                            <div style="margin-top: 20px; padding: 12px; background: #fff3cd; border: 1px solid #ffc107; border-radius: 6px;">
+                                <div style="font-weight: 600; margin-bottom: 8px; color: #856404;">
+                                    ⚠️ Attack Campaigns Detected: {{ stats['correlation_findings']['total_campaigns'] }}
+                                </div>
+                                <div style="font-size: 11px; color: #856404;">
+                                    {% for campaign in stats['correlation_findings']['campaigns'] %}
+                                        <div style="padding: 6px; background: white; border-radius: 4px; margin-bottom: 6px;">
+                                            <div style="font-weight: 600;">{{ campaign['type'] }}</div>
+                                            <div>IP: {{ campaign['ip'] }}</div>
+                                            <div>Threats: {{ campaign['threat_count'] }}</div>
+                                            <div style="font-style: italic;">{{ campaign['description'] }}</div>
+                                        </div>
+                                    {% endfor %}
+                                </div>
+                            </div>
+                            {% endif %}
+                        </div>
+                    {% else %}
+                        <div class="panel-header">📊 Dashboard</div>
+                        <div class="panel-body" style="display: flex; align-items: center; justify-content: center; color: #999;">
+                            <p>Upload a file and select a model to start detection</p>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Results Table -->
+            {% if session_data.get('results') %}
+                <div style="margin-top: 15px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                        <h3 style="margin: 0; font-size: 16px;">🔎 Detection Results</h3>
+                        <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+                            <button class="btn btn-secondary" onclick="filterBySeverity('all')" style="padding: 4px 10px; font-size: 11px;">All</button>
+                            <button class="btn btn-secondary" onclick="filterBySeverity('critical')" style="padding: 4px 10px; font-size: 11px; background-color: #721c24;">Critical</button>
+                            <button class="btn btn-secondary" onclick="filterBySeverity('high')" style="padding: 4px 10px; font-size: 11px; background-color: #dc3545;">High</button>
+                            <button class="btn btn-secondary" onclick="filterBySeverity('medium')" style="padding: 4px 10px; font-size: 11px; background-color: #fd7e14;">Medium</button>
+                            <button class="btn btn-secondary" onclick="filterBySeverity('low')" style="padding: 4px 10px; font-size: 11px; background-color: #ffc107;">Low</button>
+                        </div>
+                    </div>
+
+                    <div style="border: 1px solid var(--color-border); border-radius: 6px; overflow: hidden; max-height: calc(100vh - 300px);">
+                        <div style="overflow-y: auto; max-height: calc(100vh - 300px);">
+                            <table class="results-table">
+                                <thead>
+                                    <tr>
+                                        <th style="width: 50px;">#</th>
+                                        <th style="width: 80px;">Severity</th>
+                                        <th style="width: 60px;">Score</th>
+                                        <th>Threat Explanation & Details</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for result in session_data['results'] %}
+                                        <tr>
+                                            <td>#{{ result['record_index'] + 1 }}</td>
+                                            <td><span class="severity-badge {{ result['severity'] }}">{{ result['severity'] }}</span></td>
+                                            <td><span class="score-cell">{{ "%.3f"|format(result['score']) }}</span></td>
+                                            <td>
+                                                <div style="font-size: 12px; line-height: 1.6;">
+                                                    <div style="font-weight: 600; color: #d32f2f; margin-bottom: 6px;">
+                                                        [{{ result['threat_type'] }}] {{ result['explanation'] }}
+                                                    </div>
+                                                    
+                                                    {% if result.get('confidence') and result['confidence'] > 0 %}
+                                                    <div style="margin-bottom: 6px;">
+                                                        <span style="background: #e3f2fd; padding: 2px 8px; border-radius: 3px; font-size: 10px; font-weight: 600;">
+                                                            Confidence: {{ "%.0f"|format(result['confidence'] * 100) }}%
+                                                        </span>
+                                                        {% if result.get('detection_layer') %}
+                                                        <span style="background: #f3e5f5; padding: 2px 8px; border-radius: 3px; font-size: 10px; margin-left: 4px;">
+                                                            {{ result['detection_layer'] }}
+                                                        </span>
+                                                        {% endif %}
+                                                    </div>
+                                                    {% endif %}
+                                                    
+                                                    <div style="background: #f5f5f5; padding: 8px; border-radius: 4px; margin-top: 6px; font-family: monospace; font-size: 11px;">
+                                                        {% if result.get('timestamp') %}
+                                                        <div><strong>Timestamp:</strong> {{ result['timestamp'] }}</div>
+                                                        {% endif %}
+                                                        
+                                                        {% if result.get('identifier') %}
+                                                        <div><strong>Source IP:</strong> {{ result['identifier'] }}</div>
+                                                        {% endif %}
+                                                        
+                                                        {% if result.get('method') and result.get('uri') %}
+                                                        <div><strong>Request:</strong> {{ result['method'] }} {{ result['uri'] }}</div>
+                                                        {% endif %}
+                                                        
+                                                        {% if result.get('status_code') and result['status_code'] > 0 %}
+                                                        <div><strong>Status Code:</strong> {{ result['status_code'] }}</div>
+                                                        {% endif %}
+                                                        
+                                                        {% if result.get('response_size') %}
+                                                        <div><strong>Response Size:</strong> {{ "{:,}".format(result['response_size']) }} bytes</div>
+                                                        {% endif %}
+                                                        
+                                                        {% if result.get('duration') %}
+                                                        <div><strong>Duration:</strong> {{ result['duration'] }}ms</div>
+                                                        {% endif %}
+                                                        
+                                                        {% if result.get('user_agent') %}
+                                                        <div><strong>User Agent:</strong> {{ result['user_agent'][:100] }}{% if result['user_agent']|length > 100 %}...{% endif %}</div>
+                                                        {% endif %}
+                                                        
+                                                        {% if result.get('referer') %}
+                                                        <div><strong>Referer:</strong> {{ result['referer'][:80] }}{% if result['referer']|length > 80 %}...{% endif %}</div>
+                                                        {% endif %}
+                                                        
+                                                        <div style="margin-top: 4px;"><strong>Model:</strong> {{ result['model'].replace('_', ' ').title() }}</div>
+                                                    </div>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    {% endfor %}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    
+                    <div style="margin-top: 8px; padding: 6px; background-color: #f8f9fa; border-radius: 4px; font-size: 11px; color: #666;">
+                        Showing {{ session_data['results']|length }} records
+                    </div>
+                </div>
+            {% endif %}
+        {% else %}
+            <div style="text-align: center; padding: 60px 20px; color: #999;">
+                <p style="font-size: 18px; margin-bottom: 20px;">Welcome to Enterprise Log Anomaly Detection</p>
+                <p style="margin-bottom: 40px;">Please refresh the page or start a new session</p>
+            </div>
+        {% endif %}
+    </div>
+</body>
+</html>
