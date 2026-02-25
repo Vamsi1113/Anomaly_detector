@@ -1,4 +1,4 @@
-# SOC-Grade Inference Engine - Multi-Layer Detection Architecture
+# SOC-Grade Inference Engine - Enterprise Multi-Layer Detection Architecture
 import numpy as np
 from typing import List, Dict, Any, Tuple, Union
 from dataclasses import dataclass
@@ -6,7 +6,13 @@ from enum import Enum
 import logging
 from parsing import HTTPRecord, GenericRecord
 from features import UniversalFeatureExtractor
-from models import IsolationForestInference, AutoencoderInference
+
+# Import new modular detection engines
+from inference.signature_engine import SignatureEngine
+from inference.behavioral_engine import BehaviorEngine
+from inference.ml_engine import MLEngine
+from inference.decision_engine import DecisionEngine, AnomalySeverity
+from inference.correlation_engine import CorrelationEngine
 
 logger = logging.getLogger(__name__)
 
@@ -16,22 +22,17 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 
 class DetectionLayer(Enum):
-    """Multi-layer detection architecture"""
+    """Enterprise multi-layer detection architecture"""
     SIGNATURE = "Layer 1: Signature Detection"
     BEHAVIORAL = "Layer 2: Behavioral Detection"
     ML_ANOMALY = "Layer 3: ML Anomaly Detection"
-    CORRELATION = "Layer 4: Correlation Engine"
-
-class AnomalySeverity(Enum):
-    NORMAL = "normal"
-    LOW = "low"
-    MEDIUM = "medium"
-    HIGH = "high"
-    CRITICAL = "critical"
+    DECISION = "Layer 4: Decision Engine"
+    CORRELATION = "Layer 5: Correlation Engine"
 
 
 @dataclass
 class AnomalyResult:
+    """Legacy result format for backward compatibility"""
     record_index: int
     identifier: str
     timestamp: str
@@ -40,8 +41,8 @@ class AnomalyResult:
     model: str
     threat_type: str
     explanation: str
-    confidence: float = 0.0  # NEW: Confidence score for threat classification
-    detection_layer: str = ""  # NEW: Which layer detected the threat
+    confidence: float = 0.0
+    detection_layer: str = ""
     uri: str = ""
     status_code: int = 0
     method: str = ""
@@ -72,225 +73,169 @@ class AnomalyResult:
         }
 
 
-class PercentileSeverityClassifier:
-    def __init__(self, scores: np.ndarray):
-        self.thresholds = {
-            'critical': np.percentile(scores, 99),
-            'high': np.percentile(scores, 95),
-            'medium': np.percentile(scores, 90),
-            'low': np.percentile(scores, 80),
-        }
-        logger.info(f"Percentile thresholds: {self.thresholds}")
-    
-    def classify(self, score: float) -> str:
-        if score >= self.thresholds['critical']:
-            return AnomalySeverity.CRITICAL.value
-        elif score >= self.thresholds['high']:
-            return AnomalySeverity.HIGH.value
-        elif score >= self.thresholds['medium']:
-            return AnomalySeverity.MEDIUM.value
-        elif score >= self.thresholds['low']:
-            return AnomalySeverity.LOW.value
-        else:
-            return AnomalySeverity.NORMAL.value
-
-
-class ExplanationGenerator:
-    @staticmethod
-    def generate_explanation(threat_type: str, severity: str, score: float, record: HTTPRecord, confidence: float, detection_layer: str) -> str:
-        """Generate detailed explanation with confidence and detection layer"""
-        if severity == AnomalySeverity.NORMAL.value:
-            return "Normal request"
-        
-        parts = []
-        
-        # Add threat type with confidence
-        if threat_type != "Other":
-            parts.append(f"{threat_type} detected (confidence: {confidence:.0%})")
-        else:
-            parts.append(f"Anomalous behavior detected (ML score: {score:.3f})")
-        
-        # Add detection layer
-        parts.append(f"via {detection_layer}")
-        
-        # Add HTTP details
-        if record.status_code >= 500:
-            parts.append(f"HTTP {record.status_code}")
-        elif record.status_code >= 400:
-            parts.append(f"HTTP {record.status_code}")
-        
-        if record.response_size > 500000:
-            parts.append(f"{record.response_size:,} bytes")
-        
-        if record.duration > 3000:
-            parts.append(f"{record.duration}ms")
-        
-        return "; ".join(parts)
-
-
 class AnomalyDetectionEngine:
+    """
+    Enterprise-Grade Multi-Layer Detection Engine
+    
+    Architecture:
+        Layer 1: Signature Engine (deterministic pattern matching)
+        Layer 2: Behavioral Engine (stateful analysis)
+        Layer 3: ML Engine (statistical anomaly scoring)
+        Layer 4: Decision Engine (signal aggregation)
+        Layer 5: Correlation Engine (campaign detection)
+    """
+    
     def __init__(self):
         self.feature_extractor = UniversalFeatureExtractor()
-        self.isolation_forest = IsolationForestInference()
-        self.autoencoder = AutoencoderInference()
+        
+        # Initialize detection engines
+        self.signature_engine = SignatureEngine()
+        self.behavioral_engine = BehaviorEngine()
+        self.ml_engine = MLEngine()
+        self.decision_engine = DecisionEngine()
+        self.correlation_engine = CorrelationEngine()
+        
+        logger.info("Initialized enterprise detection engine with 5 layers")
     
     def retrain_model_on_data(self, model_type: str, training_data: np.ndarray):
-        from models import train_isolation_forest, save_model, train_autoencoder, save_autoencoder
-        from config import ISOLATION_FOREST_CONFIG, AUTOENCODER_CONFIG, ISOLATION_FOREST_MODEL_PATH, AUTOENCODER_MODEL_PATH
+        """Retrain ML models with new data"""
         logger.info(f"Retraining {model_type} with {training_data.shape} data")
-        if model_type == 'isolation_forest':
-            model, scaler = train_isolation_forest(ISOLATION_FOREST_CONFIG, training_data)
-            save_model(model, scaler, ISOLATION_FOREST_MODEL_PATH)
-            self.isolation_forest = IsolationForestInference()
-            logger.info(f"Isolation Forest retrained with {training_data.shape[1]} features")
-        elif model_type == 'autoencoder':
-            ae_model, ae_scaler, ae_encoder = train_autoencoder(AUTOENCODER_CONFIG, training_data=training_data)
-            if ae_model is not None:
-                save_autoencoder(ae_model, ae_scaler, ae_encoder, AUTOENCODER_MODEL_PATH)
-            # Force reload with explicit path to ensure new model is loaded
-            import time
-            time.sleep(0.1)  # Small delay to ensure file system sync
-            self.autoencoder = AutoencoderInference(model_path=AUTOENCODER_MODEL_PATH)
-            logger.info(f"Autoencoder retrained with {training_data.shape[1]} features")
-        else:
-            raise ValueError(f"Unknown model type: {model_type}")
+        self.ml_engine.retrain_model(model_type, training_data)
 
     
     def detect_anomalies(self, records: List[Union[HTTPRecord, GenericRecord]], features: np.ndarray, file_type: str, model_type: str, feature_info: Dict[str, Any]) -> Tuple[List[AnomalyResult], Dict[str, Any]]:
-        from inference.threat_detectors import classify_threat_with_confidence, ThreatCorrelationEngine
+        """
+        Enterprise multi-layer detection pipeline
         
-        logger.info(f"Starting multi-layer detection with {model_type} on {len(records)} records")
+        Architecture:
+            1. Signature Engine (runs first on ALL records)
+            2. Behavioral Engine (stateful analysis)
+            3. ML Engine (parallel statistical scoring)
+            4. Decision Engine (signal aggregation)
+            5. Correlation Engine (campaign detection)
+        """
+        logger.info(f"Starting enterprise detection pipeline on {len(records)} records")
         
-        # ========================================================================
-        # LAYER 3: ML ANOMALY DETECTION
-        # ========================================================================
-        if model_type == 'isolation_forest':
-            scores, is_anomaly = self.isolation_forest.predict(features)
-        elif model_type == 'autoencoder':
-            scores, metadata = self.autoencoder.predict(features)
-        else:
-            raise ValueError(f"Unknown model type: {model_type}")
-        
-        classifier = PercentileSeverityClassifier(scores)
-        explanation_gen = ExplanationGenerator()
-        results = []
+        # Reset behavioral and correlation engines for new analysis
+        self.behavioral_engine.reset()
+        self.correlation_engine.reset()
         
         # ========================================================================
-        # LAYER 1: SIGNATURE DETECTION + LAYER 2: BEHAVIORAL DETECTION
+        # LAYER 3: ML ANOMALY DETECTION (PARALLEL)
         # ========================================================================
-        for idx, (record, score) in enumerate(zip(records, scores)):
-            # Get ML-based severity
-            ml_severity = classifier.classify(score)
+        logger.info("Layer 3: Running ML anomaly detection...")
+        ml_scores, ml_metadata = self.ml_engine.predict(features, model_type)
+        
+        # ========================================================================
+        # LAYERS 1, 2, 4: SIGNATURE + BEHAVIORAL + DECISION (PER RECORD)
+        # ========================================================================
+        logger.info("Layers 1, 2, 4: Running signature, behavioral, and decision engines...")
+        unified_results = []
+        
+        # Progress tracking for large datasets
+        total_records = len(records)
+        log_interval = max(1000, total_records // 10)  # Log every 10% or 1000 records
+        
+        for idx, (record, ml_score) in enumerate(zip(records, ml_scores)):
+            # Log progress for large datasets
+            if idx > 0 and idx % log_interval == 0:
+                progress_pct = (idx / total_records) * 100
+                logger.info(f"  Progress: {idx}/{total_records} records ({progress_pct:.1f}%)")
             
-            # Default values
-            threat_type = "Other"
-            confidence = 0.0
-            detection_layer = DetectionLayer.ML_ANOMALY.value
-            final_severity = ml_severity
+            # Normalize ML score to 0-1 range
+            ml_score_normalized = self.ml_engine.get_anomaly_score_normalized(ml_score, ml_scores)
             
-            # Run signature + behavioral detection for HTTP records
+            # LAYER 1: SIGNATURE DETECTION (ALWAYS RUNS FIRST)
             if isinstance(record, HTTPRecord):
-                threat_type, confidence = classify_threat_with_confidence(
+                signature_result = self.signature_engine.detect(
                     uri=record.uri,
                     user_agent=record.user_agent,
                     response_size=record.response_size,
-                    status_code=record.status_code,
-                    records=records,
-                    client_ip=record.client_ip
-                )
-                
-                # Determine detection layer
-                if threat_type != "Other":
-                    if threat_type in ["Brute Force"]:
-                        detection_layer = DetectionLayer.BEHAVIORAL.value
-                    else:
-                        detection_layer = DetectionLayer.SIGNATURE.value
-                    
-                    # Severity boosting for critical threats
-                    if threat_type in ["Command Injection", "SQL Injection", "Path Traversal", "SSTI", "RCE"]:
-                        if final_severity in [AnomalySeverity.LOW.value, AnomalySeverity.MEDIUM.value]:
-                            final_severity = AnomalySeverity.HIGH.value
-                            logger.debug(f"Boosted severity to HIGH for critical threat: {threat_type}")
-                    
-                    # If threat detected but ML says normal, upgrade to at least LOW
-                    if final_severity == AnomalySeverity.NORMAL.value:
-                        final_severity = AnomalySeverity.LOW.value
-                        logger.debug(f"Upgraded severity to LOW for detected threat: {threat_type}")
-                else:
-                    # No signature match, use ML detection
-                    detection_layer = DetectionLayer.ML_ANOMALY.value
-            
-            # Generate explanation
-            if isinstance(record, HTTPRecord):
-                explanation = explanation_gen.generate_explanation(
-                    threat_type, final_severity, score, record, confidence, detection_layer
+                    status_code=record.status_code
                 )
             else:
-                explanation = f"Anomalous pattern detected (score: {score:.3f})"
+                # Generic records don't have signature detection
+                from inference.signature_engine import SignatureResult
+                signature_result = SignatureResult(
+                    signature_flag=False,
+                    threat_type="Other",
+                    signature_confidence=0.0,
+                    matched_patterns=[]
+                )
             
-            # Extract record details
-            if isinstance(record, HTTPRecord):
-                identifier = record.client_ip
-                timestamp = record.timestamp
-                uri = record.uri
-                status_code = record.status_code
-                method = record.method
-                duration = record.duration
-                response_size = record.response_size
-                user_agent = record.user_agent
-                referer = record.raw_row.get('referer', '')
-            else:
-                identifier = record.identifier
-                timestamp = record.timestamp
-                uri = ""
-                status_code = 0
-                method = ""
-                duration = 0
-                response_size = 0
-                user_agent = ""
-                referer = ""
+            # LAYER 2: BEHAVIORAL DETECTION (STATEFUL)
+            behavior_result = self.behavioral_engine.analyze_record(record, records)
             
-            result = AnomalyResult(
+            # LAYER 4: DECISION ENGINE (SIGNAL AGGREGATION)
+            unified_threat = self.decision_engine.make_decision(
+                record=record,
                 record_index=idx,
-                identifier=identifier,
-                timestamp=timestamp,
-                score=float(score),
-                severity=final_severity,
-                model=model_type,
-                threat_type=threat_type,
-                explanation=explanation,
-                confidence=confidence,
-                detection_layer=detection_layer,
-                uri=uri,
-                status_code=status_code,
-                method=method,
-                duration=duration,
-                response_size=response_size,
-                user_agent=user_agent,
-                referer=referer
+                signature_result=signature_result,
+                behavior_result=behavior_result,
+                ml_score=ml_score,
+                ml_score_normalized=ml_score_normalized
             )
-            results.append(result)
+            
+            unified_results.append(unified_threat)
+        
+        # Convert unified results to legacy AnomalyResult format for compatibility
+        # FILTER: Only include Critical, High, and Medium severity threats
+        legacy_results = []
+        for unified in unified_results:
+            # Only include threats that are MEDIUM or above
+            if unified.final_severity in ['critical', 'high', 'medium']:
+                legacy_result = AnomalyResult(
+                    record_index=unified.record_index,
+                    identifier=unified.identifier,
+                    timestamp=unified.timestamp,
+                    score=unified.final_risk_score,
+                    severity=unified.final_severity,
+                    model=model_type,
+                    threat_type=unified.final_threat_type,
+                    explanation=unified.explanation,
+                    confidence=max(unified.signature_confidence, unified.behavior_confidence),
+                    detection_layer=unified.detection_layer,
+                    uri=unified.uri,
+                    status_code=unified.status_code,
+                    method=unified.method,
+                    duration=unified.duration,
+                    response_size=unified.response_size,
+                    user_agent=unified.user_agent,
+                    referer=unified.referer
+                )
+                legacy_results.append(legacy_result)
         
         # ========================================================================
-        # LAYER 4: CORRELATION ENGINE
+        # LAYER 5: CORRELATION ENGINE (CAMPAIGN DETECTION)
         # ========================================================================
-        correlation_engine = ThreatCorrelationEngine()
-        correlation_results = correlation_engine.analyze_attack_chain([r.to_dict() for r in results])
+        logger.info("Layer 5: Running correlation engine...")
+        # Only analyze filtered results (Critical/High/Medium) for campaigns
+        correlation_results = self.correlation_engine.analyze_attack_chain(
+            [r.to_dict() for r in legacy_results]
+        )
         
         # Compute statistics
-        stats = self._compute_statistics(results, records, model_type, correlation_results)
+        stats = self._compute_statistics(legacy_results, records, model_type, correlation_results)
         
-        logger.info(f"Detection complete: {len(results)} records, {sum(1 for r in results if r.severity != 'normal')} anomalies")
+        # Log detection summary
+        logger.info(f"Detection complete: {len(records)} records analyzed")
+        logger.info(f"  - Signature detections: {self.signature_engine.detection_count}")
+        logger.info(f"  - Behavioral detections: {self.behavioral_engine.detection_count}")
+        logger.info(f"  - ML anomalies: {self.ml_engine.detection_count}")
+        logger.info(f"  - Final threats (Critical/High/Medium only): {len(legacy_results)}")
+        
         if correlation_results['total_campaigns'] > 0:
             logger.warning(f"⚠️  {correlation_results['total_campaigns']} attack campaigns detected!")
         
-        return results, stats
+        return legacy_results, stats
 
     
     @staticmethod
     def _compute_statistics(results: List[AnomalyResult], records: List[HTTPRecord], model_type: str, correlation_results: Dict[str, Any]) -> Dict[str, Any]:
+        """Compute detection statistics (only for Critical/High/Medium threats)"""
+        # Note: results are already filtered to only include critical/high/medium
         severities = [r.severity for r in results]
-        threat_types = [r.threat_type for r in results if r.severity != 'normal']
+        threat_types = [r.threat_type for r in results]
         threat_type_counts = {}
         for tt in threat_types:
             threat_type_counts[tt] = threat_type_counts.get(tt, 0) + 1
@@ -298,26 +243,25 @@ class AnomalyDetectionEngine:
         # Detection layer statistics
         layer_counts = {}
         for r in results:
-            if r.severity != 'normal':
-                layer = r.detection_layer
-                layer_counts[layer] = layer_counts.get(layer, 0) + 1
+            layer = r.detection_layer
+            layer_counts[layer] = layer_counts.get(layer, 0) + 1
         
         stats = {
             'total_records': len(records),
-            'total_anomalies': sum(1 for s in severities if s != 'normal'),
-            'anomaly_percentage': 100.0 * sum(1 for s in severities if s != 'normal') / len(records),
+            'total_anomalies': len(results),  # Only critical/high/medium
+            'anomaly_percentage': 100.0 * len(results) / len(records) if len(records) > 0 else 0.0,
             'severity_distribution': {
                 'critical': sum(1 for s in severities if s == 'critical'),
                 'high': sum(1 for s in severities if s == 'high'),
                 'medium': sum(1 for s in severities if s == 'medium'),
-                'low': sum(1 for s in severities if s == 'low'),
-                'normal': sum(1 for s in severities if s == 'normal'),
+                'low': 0,  # Not tracked anymore
+                'normal': 0,  # Not tracked anymore
             },
             'threat_type_distribution': threat_type_counts,
             'detection_layer_distribution': layer_counts,
             'correlation_findings': correlation_results,
-            'mean_score': float(np.mean([r.score for r in results])),
-            'std_score': float(np.std([r.score for r in results])),
+            'mean_score': float(np.mean([r.score for r in results])) if len(results) > 0 else 0.0,
+            'std_score': float(np.std([r.score for r in results])) if len(results) > 0 else 0.0,
             'model': model_type,
         }
         return stats
