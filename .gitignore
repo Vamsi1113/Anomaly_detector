@@ -45,6 +45,11 @@ venv.bak/
 .env
 .env.local
 
+# Test files with secrets (DO NOT COMMIT)
+llmtest.py
+test_env_key.py
+test_azure_openai.py
+
 # Flask
 instance/
 .webassets-cache
