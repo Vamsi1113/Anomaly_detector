@@ -200,10 +200,21 @@ class SyslogParser:
             with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
                 content = f.read()
             
+            # Preprocessing: Normalize log entries
+            # 1. Replace escaped quotes with regular quotes
+            content = content.replace('\\"', '"')
+            content = content.replace('""', '"')
+            
+            # 2. Normalize multiple spaces to single space
+            content = re.sub(r'\s+', ' ', content)
+            
             # Split by syslog entry start pattern (any priority number, not just 150)
+            # This handles cases where multiple entries are on the same line
             log_entries = re.split(r'(?=<\d+>[A-Za-z]{3}\s+\d+\s+\d+:\d+:\d+)', content)
             
-            total_entries = len([e for e in log_entries if e.strip()])
+            # Filter out empty entries
+            log_entries = [e.strip() for e in log_entries if e.strip()]
+            total_entries = len(log_entries)
             logger.info(f"Found {total_entries} log entries to parse")
             
             for line_num, log_line in enumerate(log_entries, 1):
@@ -309,9 +320,49 @@ class SyslogParser:
                         r'(?:\s+"+(?P<user_agent>[^"]*?)"+)?'
                     )
                     
-                    # Try all patterns
+                    # Pattern 8: Format with -- instead of - - (IP dest_ip port domain -- [timestamp])
+                    # <100> Feb 19 08:21:01 testserver httpd[12345]: 192.168.1.10 10.0.0.7 55301 abc.test.net --[20/Jan/2026:08:21:01 +0530] "GET /home HTTP/1.1" 200 4521 "-" "Mozilla..."
+                    pattern8 = re.compile(
+                        r'<\d+>\s*(?P<syslog_timestamp>[A-Za-z]{3}\s+\d+\s+\d+:\d+:\d+)\s+'
+                        r'(?P<hostname>\S+)\s+(?P<process>\S+):\s+'
+                        r'(?P<source_ip>[\d\.]+)\s+(?P<dest_ip>[\d\.]+)\s+'
+                        r'(?P<port>\d+)\s+(?P<domain>\S+)\s+'
+                        r'--\[(?P<timestamp>[^\]]+)\]\s+'
+                        r'"+(?P<method>[A-Z]+)\s+(?P<uri>.+?)\s+HTTP/[\d\.]+"+\s+'
+                        r'(?P<status_code>\d+)\s+(?P<response_size>[\d\-]+)(?:\s+(?P<duration>[\d\-]+))?'
+                        r'(?:\s+"+(?P<referer>[^"]*?)"+)?'
+                        r'(?:\s+"+(?P<user_agent>[^"]*?)"+)?'
+                    )
+                    
+                    # Pattern 9: Format with trailing -- 0 @ number --
+                    # <150>Feb 19 18:00:37 testingserver567 httpd[17308]: 10.61.109.4 23.96.179.243 - - [18/Feb/2026:18:00:37 +0530] "GET / HTTP/1.1" 200 2493 "-" "Azure Traffic Manager Endpoint Monitor" -- 0 @ 872 --
+                    pattern9 = re.compile(
+                        r'<\d+>(?P<syslog_timestamp>[A-Za-z]{3}\s+\d+\s+\d+:\d+:\d+)\s+'
+                        r'(?P<hostname>\S+)\s+(?P<process>\S+):\s+'
+                        r'(?P<source_ip>[\d\.]+)\s+(?P<dest_ip>[\d\.]+)\s+'
+                        r'-\s+-\s+'
+                        r'\[(?P<timestamp>[^\]]+)\]\s+'
+                        r'"+(?P<method>[A-Z]+)\s+(?P<uri>.+?)\s+HTTP/[\d\.]+"+\s+'
+                        r'(?P<status_code>\d+)\s+(?P<response_size>[\d\-]+)'
+                        r'(?:\s+"+(?P<referer>[^"]*?)"+)?'
+                        r'(?:\s+"+(?P<user_agent>[^"]*?)"+)?'
+                        r'(?:\s+--\s+\d+\s+@\s+\d+\s+--)?'
+                    )
+                    
+                    # Pattern 10: Fallback - Very flexible pattern to catch most variations
+                    # Matches: <priority>timestamp hostname process: IP ... [timestamp] "METHOD /uri HTTP/x.x" status size ...
+                    pattern10 = re.compile(
+                        r'<\d+>\s*(?P<syslog_timestamp>[A-Za-z]{3}\s+\d+\s+\d+:\d+:\d+)\s+'
+                        r'(?P<hostname>\S+)\s+(?P<process>\S+):\s+'
+                        r'(?P<source_ip>[\d\.]+)\s+'
+                        r'.*?\[(?P<timestamp>[^\]]+)\]\s+'
+                        r'"+(?P<method>[A-Z]+)\s+(?P<uri>.+?)\s+HTTP/[\d\.]+"+\s+'
+                        r'(?P<status_code>\d+)\s+(?P<response_size>[\d\-]+)'
+                    )
+                    
+                    # Try all patterns (specific patterns first, fallback last)
                     match = None
-                    for pattern in [pattern1, pattern2, pattern3, pattern4, pattern5, pattern6, pattern7]:
+                    for pattern in [pattern1, pattern2, pattern3, pattern4, pattern5, pattern6, pattern7, pattern8, pattern9, pattern10]:
                         match = pattern.search(log_line)
                         if match:
                             break
@@ -323,32 +374,47 @@ class SyslogParser:
                     
                     groups = match.groupdict()
                     
-                    # Handle missing or dash values
+                    # Handle missing or dash values with better defaults
                     response_size = groups.get('response_size', '0')
-                    if response_size == '-' or not response_size:
+                    if response_size == '-' or not response_size or response_size == 'None':
                         response_size = '0'
                     
                     duration = groups.get('duration', '0')
-                    if duration == '-' or not duration or duration is None:
+                    if duration == '-' or not duration or duration is None or duration == 'None':
                         duration = '0'
                     
                     port = groups.get('port', '0')
-                    if not port or port == '-':
+                    if not port or port == '-' or port == 'None':
                         port = '0'
                     
                     dest_ip = groups.get('dest_ip', '0.0.0.0')
-                    if not dest_ip or dest_ip == '-':
+                    if not dest_ip or dest_ip == '-' or dest_ip == 'None':
                         dest_ip = '0.0.0.0'
                     
-                    # Clean fields - remove extra quotes
-                    uri = groups.get('uri', '').strip('"').strip()
-                    user_agent = (groups.get('user_agent') or '').strip('"').strip()
-                    referer = (groups.get('referer') or '').strip('"').strip()
+                    user_agent = groups.get('user_agent', '')
+                    if not user_agent or user_agent == '-' or user_agent == 'None':
+                        user_agent = 'Unknown'
+                    
+                    referer = groups.get('referer', '')
+                    if not referer or referer == '-' or referer == 'None':
+                        referer = ''
+                    
+                    uri = groups.get('uri', '/')
+                    if not uri:
+                        uri = '/'
+                    
                     domain = groups.get('domain', '')
+                    if not domain or domain == '-' or domain == 'None':
+                        domain = ''
+                    
+                    # Clean fields - remove extra quotes
+                    uri = uri.strip('"').strip()
+                    user_agent = user_agent.strip('"').strip()
+                    referer = referer.strip('"').strip()
                     
                     record = HTTPRecord(
                         timestamp=groups.get('timestamp', ''),
-                        client_ip=groups.get('source_ip', ''),
+                        client_ip=groups.get('source_ip', '0.0.0.0'),
                         method=groups.get('method', '').upper(),
                         uri=uri,
                         status_code=int(groups.get('status_code', 0)),
@@ -367,7 +433,9 @@ class SyslogParser:
                     records.append(record)
                 
                 except (ValueError, KeyError, TypeError) as e:
-                    errors.append(f"Line {line_num}: {str(e)}")
+                    error_msg = f"Line {line_num}: Could not parse - {log_line[:150]}"
+                    errors.append(error_msg)
+                    logger.debug(f"Parse error: {str(e)}")
                     continue
             
             logger.info(f"Parsed {len(records)} syslog records from {filepath.name} (expected {total_entries})")

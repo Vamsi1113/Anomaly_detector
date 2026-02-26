@@ -13,6 +13,7 @@ from inference.behavioral_engine import BehaviorEngine
 from inference.ml_engine import MLEngine
 from inference.decision_engine import DecisionEngine, AnomalySeverity
 from inference.correlation_engine import CorrelationEngine
+from inference.llm_enrichment import LLMEnrichmentService
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,7 @@ class DetectionLayer(Enum):
     ML_ANOMALY = "Layer 3: ML Anomaly Detection"
     DECISION = "Layer 4: Decision Engine"
     CORRELATION = "Layer 5: Correlation Engine"
+    LLM_ENRICHMENT = "Layer 6: LLM Intelligence (Optional)"
 
 
 @dataclass
@@ -83,9 +85,10 @@ class AnomalyDetectionEngine:
         Layer 3: ML Engine (statistical anomaly scoring)
         Layer 4: Decision Engine (signal aggregation)
         Layer 5: Correlation Engine (campaign detection)
+        Layer 6: LLM Intelligence (post-detection enrichment) - OPTIONAL
     """
     
-    def __init__(self):
+    def __init__(self, enable_llm: bool = False, openai_api_key: str = None):
         self.feature_extractor = UniversalFeatureExtractor()
         
         # Initialize detection engines
@@ -95,7 +98,13 @@ class AnomalyDetectionEngine:
         self.decision_engine = DecisionEngine()
         self.correlation_engine = CorrelationEngine()
         
-        logger.info("Initialized enterprise detection engine with 5 layers")
+        # Initialize LLM enrichment (optional)
+        self.llm_service = LLMEnrichmentService(
+            api_key=openai_api_key,
+            enabled=enable_llm
+        )
+        
+        logger.info(f"Initialized enterprise detection engine with {'6 layers (LLM enabled)' if enable_llm else '5 layers'}")
     
     def retrain_model_on_data(self, model_type: str, training_data: np.ndarray):
         """Retrain ML models with new data"""
@@ -214,8 +223,25 @@ class AnomalyDetectionEngine:
             [r.to_dict() for r in legacy_results]
         )
         
+        # ========================================================================
+        # LAYER 6: LLM INTELLIGENCE (POST-DETECTION ENRICHMENT) - OPTIONAL
+        # ========================================================================
+        llm_enrichment = {}
+        if self.llm_service.enabled:
+            logger.info("Layer 6: Running LLM enrichment analysis...")
+            llm_enrichment = self.llm_service.enrich_results(
+                [r.to_dict() for r in legacy_results]
+            )
+        else:
+            llm_enrichment = {
+                'enabled': False,
+                'clusters_analyzed': 0,
+                'novel_patterns_detected': 0,
+                'llm_insights': []
+            }
+        
         # Compute statistics
-        stats = self._compute_statistics(legacy_results, records, model_type, correlation_results)
+        stats = self._compute_statistics(legacy_results, records, model_type, correlation_results, llm_enrichment)
         
         # Log detection summary
         logger.info(f"Detection complete: {len(records)} records analyzed")
@@ -231,7 +257,7 @@ class AnomalyDetectionEngine:
 
     
     @staticmethod
-    def _compute_statistics(results: List[AnomalyResult], records: List[HTTPRecord], model_type: str, correlation_results: Dict[str, Any]) -> Dict[str, Any]:
+    def _compute_statistics(results: List[AnomalyResult], records: List[HTTPRecord], model_type: str, correlation_results: Dict[str, Any], llm_enrichment: Dict[str, Any]) -> Dict[str, Any]:
         """Compute detection statistics (only for Critical/High/Medium threats)"""
         # Note: results are already filtered to only include critical/high/medium
         severities = [r.severity for r in results]
@@ -260,6 +286,7 @@ class AnomalyDetectionEngine:
             'threat_type_distribution': threat_type_counts,
             'detection_layer_distribution': layer_counts,
             'correlation_findings': correlation_results,
+            'llm_enrichment': llm_enrichment,  # NEW: LLM insights
             'mean_score': float(np.mean([r.score for r in results])) if len(results) > 0 else 0.0,
             'std_score': float(np.std([r.score for r in results])) if len(results) > 0 else 0.0,
             'model': model_type,

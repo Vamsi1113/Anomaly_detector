@@ -6,6 +6,7 @@ from .behavioral_engine import BehaviorEngine
 from .ml_engine import MLEngine
 from .decision_engine import DecisionEngine
 from .correlation_engine import CorrelationEngine
+from .llm_enrichment import LLMEnrichmentService
 
 __all__ = [
     'AnomalyDetectionEngine',
@@ -15,5 +16,6 @@ __all__ = [
     'BehaviorEngine',
     'MLEngine',
     'DecisionEngine',
-    'CorrelationEngine'
+    'CorrelationEngine',
+    'LLMEnrichmentService'
 ]

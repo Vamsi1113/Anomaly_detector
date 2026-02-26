@@ -8,6 +8,10 @@ from pathlib import Path
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify, session as flask_session
 from werkzeug.utils import secure_filename
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 from config import (
     FLASK_CONFIG,
@@ -36,8 +40,15 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__, template_folder='ui/templates', static_folder='ui/static')
 app.config.update(FLASK_CONFIG)
 
-# Initialize detection engine
-detection_engine = AnomalyDetectionEngine()
+# Initialize detection engine with optional LLM enrichment
+# Set ENABLE_LLM=true and OPENAI_API_KEY in environment to enable
+ENABLE_LLM = os.getenv('ENABLE_LLM', 'false').lower() == 'true'
+OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', None)
+
+detection_engine = AnomalyDetectionEngine(
+    enable_llm=ENABLE_LLM,
+    openai_api_key=OPENAI_API_KEY
+)
 parser = UniversalParser()
 feature_extractor = UniversalFeatureExtractor()
 

@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 def main():
-    training_file = PROJECT_ROOT / "advanced_synthetic_logs.log"
+    training_file = PROJECT_ROOT / "orglog1.csv"
     
     if not training_file.exists():
         logger.error(f"Training file not found: {training_file}")

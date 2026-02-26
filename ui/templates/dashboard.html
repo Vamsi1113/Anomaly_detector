@@ -299,6 +299,66 @@
                                 </div>
                             </div>
                             {% endif %}
+                            
+                            <!-- LLM Intelligence Insights (Layer 6) -->
+                            {% if stats.get('llm_enrichment') and stats['llm_enrichment'].get('enabled') %}
+                            <div style="margin-top: 20px; padding: 12px; background: #e7f3ff; border: 1px solid #2196F3; border-radius: 6px;">
+                                <div style="font-weight: 600; margin-bottom: 8px; color: #0d47a1;">
+                                    🧠 LLM Intelligence Analysis (Layer 6)
+                                </div>
+                                <div style="font-size: 11px; color: #0d47a1; margin-bottom: 8px;">
+                                    <div>Clusters Analyzed: {{ stats['llm_enrichment']['clusters_analyzed'] }}</div>
+                                    <div>Novel Patterns Detected: {{ stats['llm_enrichment']['novel_patterns_detected'] }}</div>
+                                </div>
+                                
+                                {% if stats['llm_enrichment'].get('llm_insights') and stats['llm_enrichment']['llm_insights']|length > 0 %}
+                                <div style="font-weight: 600; margin-top: 12px; margin-bottom: 6px; color: #0d47a1;">
+                                    Behavioral Insights:
+                                </div>
+                                {% for insight in stats['llm_enrichment']['llm_insights'] %}
+                                    <div style="padding: 8px; background: white; border-radius: 4px; margin-bottom: 8px; border-left: 3px solid #2196F3;">
+                                        <div style="font-weight: 600; margin-bottom: 4px;">
+                                            IP: {{ insight['cluster_ip'] }} ({{ insight['request_count'] }} requests)
+                                        </div>
+                                        <div style="font-size: 10px; margin-bottom: 4px; color: #666;">
+                                            Threat Types: {{ insight['threat_types']|join(', ') }}
+                                        </div>
+                                        <div style="font-size: 11px; line-height: 1.5; color: #333;">
+                                            {{ insight['llm_analysis'] }}
+                                        </div>
+                                        <div style="font-size: 9px; margin-top: 4px; color: #999;">
+                                            Model: {{ insight['llm_model'] }} | {{ insight['analyzed_at'] }}
+                                        </div>
+                                    </div>
+                                {% endfor %}
+                                {% else %}
+                                <div style="font-size: 11px; color: #666; font-style: italic;">
+                                    No LLM insights generated (no clusters met analysis criteria)
+                                </div>
+                                {% endif %}
+                                
+                                {% if stats['llm_enrichment'].get('novel_patterns') and stats['llm_enrichment']['novel_patterns']|length > 0 %}
+                                <div style="font-weight: 600; margin-top: 12px; margin-bottom: 6px; color: #0d47a1;">
+                                    Novel Threat Patterns:
+                                </div>
+                                {% for pattern in stats['llm_enrichment']['novel_patterns'] %}
+                                    <div style="padding: 6px; background: #fff9e6; border-radius: 4px; margin-bottom: 4px; font-size: 10px;">
+                                        <div><strong>IP:</strong> {{ pattern['ip'] }} | <strong>Score:</strong> {{ "%.3f"|format(pattern['anomaly_score']) }}</div>
+                                        <div><strong>URI:</strong> {{ pattern['uri'][:80] }}{% if pattern['uri']|length > 80 %}...{% endif %}</div>
+                                    </div>
+                                {% endfor %}
+                                {% endif %}
+                            </div>
+                            {% elif stats.get('llm_enrichment') and not stats['llm_enrichment'].get('enabled') %}
+                            <div style="margin-top: 20px; padding: 12px; background: #f5f5f5; border: 1px solid #ccc; border-radius: 6px;">
+                                <div style="font-weight: 600; margin-bottom: 4px; color: #666;">
+                                    🧠 LLM Intelligence (Layer 6): Disabled
+                                </div>
+                                <div style="font-size: 10px; color: #999;">
+                                    Enable LLM enrichment in .env to get behavioral insights
+                                </div>
+                            </div>
+                            {% endif %}
                         </div>
                     {% else %}
                         <div class="panel-header">📊 Dashboard</div>
