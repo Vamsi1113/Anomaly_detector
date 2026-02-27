@@ -1,8 +1,9 @@
 """
-LLM Intelligence Layer - Post-Detection Enrichment
-Analyzes high-severity threats for behavioral patterns and novel threat discovery
+LLM Intelligence Layer - Mandatory Behavioral Analysis
+Performs comprehensive threat intelligence analysis on ALL high-severity threat clusters
 """
 import os
+import json
 from typing import List, Dict, Any, Optional
 from collections import defaultdict
 from datetime import datetime
@@ -20,42 +21,63 @@ except ImportError:
 
 
 class ThreatCluster:
-    """Represents a cluster of similar threats for LLM analysis"""
+    """Represents a cluster of similar threats for comprehensive LLM behavioral analysis"""
     
-    def __init__(self, ip: str, threat_types: List[str], time_window: str):
+    def __init__(self, cluster_id: str, ip: str, threat_types: List[str]):
+        self.cluster_id = cluster_id
         self.ip = ip
         self.threat_types = threat_types
         self.threats = []
-        self.time_window = time_window
         self.request_count = 0
         self.avg_anomaly_score = 0.0
         self.severity_distribution = defaultdict(int)
+        self.first_seen = None
+        self.last_seen = None
+        self.unique_uris = set()
+        self.unique_methods = set()
+        self.status_codes = defaultdict(int)
     
     def add_threat(self, threat: Dict[str, Any]):
-        """Add a threat to this cluster"""
+        """Add a threat to this cluster and update statistics"""
         self.threats.append(threat)
         self.request_count += 1
         self.severity_distribution[threat['severity']] += 1
+        
+        # Track temporal information
+        timestamp = threat.get('timestamp', '')
+        if not self.first_seen or timestamp < self.first_seen:
+            self.first_seen = timestamp
+        if not self.last_seen or timestamp > self.last_seen:
+            self.last_seen = timestamp
+        
+        # Track request patterns
+        if threat.get('uri'):
+            self.unique_uris.add(threat['uri'])
+        if threat.get('method'):
+            self.unique_methods.add(threat['method'])
+        if threat.get('status_code'):
+            self.status_codes[threat['status_code']] += 1
     
     def calculate_stats(self):
-        """Calculate cluster statistics"""
+        """Calculate comprehensive cluster statistics"""
         if self.threats:
             self.avg_anomaly_score = sum(t['score'] for t in self.threats) / len(self.threats)
     
-    def get_sample_logs(self, max_samples: int = 5) -> List[Dict[str, Any]]:
-        """Get representative sample logs from cluster"""
-        # Get diverse samples (different threat types if possible)
+    def get_structured_samples(self, max_samples: int = 5) -> List[Dict[str, Any]]:
+        """Get structured sample requests for LLM analysis"""
         samples = []
         seen_types = set()
         
         for threat in self.threats:
             if threat['threat_type'] not in seen_types or len(samples) < max_samples:
                 samples.append({
-                    'uri': threat['uri'],
-                    'method': threat['method'],
+                    'method': threat.get('method', 'UNKNOWN'),
+                    'uri': threat.get('uri', 'N/A'),
+                    'status': threat.get('status_code', 0),
+                    'response_size': threat.get('response_size', 0),
                     'threat_type': threat['threat_type'],
                     'severity': threat['severity'],
-                    'timestamp': threat['timestamp']
+                    'timestamp': threat.get('timestamp', 'N/A')
                 })
                 seen_types.add(threat['threat_type'])
                 if len(samples) >= max_samples:
@@ -63,35 +85,51 @@ class ThreatCluster:
         
         return samples
     
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert cluster to dictionary for LLM analysis"""
+    def to_structured_dict(self) -> Dict[str, Any]:
+        """Convert cluster to structured format for LLM analysis"""
         self.calculate_stats()
+        
+        # Calculate time delta
+        time_delta = "Unknown"
+        if self.first_seen and self.last_seen:
+            try:
+                # Simple time delta calculation
+                time_delta = f"{self.first_seen} to {self.last_seen}"
+            except:
+                pass
+        
         return {
-            'ip': self.ip,
+            'cluster_id': self.cluster_id,
+            'source_ip': self.ip,
             'threat_types': list(set(self.threat_types)),
-            'request_count': self.request_count,
-            'time_window': self.time_window,
-            'avg_anomaly_score': round(self.avg_anomaly_score, 3),
+            'total_threats': self.request_count,
             'severity_distribution': dict(self.severity_distribution),
-            'sample_logs': self.get_sample_logs()
+            'time_range': time_delta,
+            'avg_anomaly_score': round(self.avg_anomaly_score, 3),
+            'unique_uri_count': len(self.unique_uris),
+            'unique_methods': list(self.unique_methods),
+            'most_frequent_uri': max(self.unique_uris, key=lambda uri: sum(1 for t in self.threats if t.get('uri') == uri)) if self.unique_uris else 'N/A',
+            'status_code_distribution': dict(self.status_codes),
+            'sample_requests': self.get_structured_samples()
         }
 
 
 class LLMEnrichmentService:
     """
-    LLM Intelligence Layer for post-detection threat enrichment
+    LLM Intelligence Layer - Mandatory Behavioral Analysis
     
-    IMPORTANT: LLM does NOT:
-    - Assign severity
-    - Override detection logic
-    - Replace deterministic rules
-    - Replace ML
+    CRITICAL: LLM ALWAYS analyzes ALL high-severity threat clusters
     
-    LLM ONLY:
-    - Analyzes behavioral patterns
-    - Discovers novel threat patterns
-    - Generates analyst summaries
-    - Provides threat intelligence
+    LLM does NOT:
+    - Assign severity (Decision Engine does this)
+    - Override detection logic (Rules remain deterministic)
+    - Replace signature/behavioral/ML detection
+    
+    LLM ALWAYS:
+    - Performs comprehensive behavioral intelligence analysis
+    - Generates SOC-ready threat intelligence reports
+    - Analyzes attacker intent and sophistication
+    - Provides actionable recommendations
     """
     
     def __init__(self, api_key: Optional[str] = None, enabled: bool = True):
@@ -99,7 +137,7 @@ class LLMEnrichmentService:
         self.api_key = api_key or os.getenv('OPENAI_API_KEY')
         self.client = None
         self.max_clusters_per_file = 10  # Cost control
-        self.max_tokens = 500  # Cost control
+        self.max_tokens = 800  # Increased for detailed analysis
         
         if self.enabled and self.api_key:
             try:
@@ -121,13 +159,12 @@ class LLMEnrichmentService:
         """Filter only Critical, High, and Medium severity threats"""
         return [r for r in results if r['severity'] in ['critical', 'high', 'medium']]
     
-    def cluster_threats(self, threats: List[Dict[str, Any]], time_window_minutes: int = 5) -> List[ThreatCluster]:
+    def cluster_threats(self, threats: List[Dict[str, Any]]) -> List[ThreatCluster]:
         """
-        Cluster threats by IP, time window, and threat type
+        Cluster threats by IP and threat type for comprehensive analysis
         
         Args:
             threats: List of threat detections
-            time_window_minutes: Time window for clustering (default 5 min)
         
         Returns:
             List of ThreatCluster objects
@@ -142,15 +179,18 @@ class LLMEnrichmentService:
         
         # Create cluster objects
         clusters = []
+        cluster_counter = 1
+        
         for ip, threat_groups in clusters_by_ip.items():
-            # Only create clusters for IPs with multiple threats
+            # Create clusters for ALL IPs with threats (no minimum threshold)
             total_threats = sum(len(threats) for threats in threat_groups.values())
-            if total_threats >= 3:  # Minimum 3 threats to form a cluster
+            if total_threats >= 1:  # Analyze even single threats if high severity
                 threat_types = list(threat_groups.keys())
+                cluster_id = f"CLUSTER-{cluster_counter:03d}"
                 cluster = ThreatCluster(
+                    cluster_id=cluster_id,
                     ip=ip,
-                    threat_types=threat_types,
-                    time_window=f"{time_window_minutes} minutes"
+                    threat_types=threat_types
                 )
                 
                 for threat_list in threat_groups.values():
@@ -158,6 +198,7 @@ class LLMEnrichmentService:
                         cluster.add_threat(threat)
                 
                 clusters.append(cluster)
+                cluster_counter += 1
         
         # Sort by severity and threat count (most severe first)
         clusters.sort(key=lambda c: (
@@ -168,88 +209,251 @@ class LLMEnrichmentService:
         
         return clusters[:self.max_clusters_per_file]
     
-    def prepare_llm_payload(self, cluster: ThreatCluster) -> str:
-        """Prepare structured prompt for LLM analysis"""
-        cluster_data = cluster.to_dict()
+    def prepare_behavioral_analysis_prompt(self, cluster: ThreatCluster) -> str:
+        """
+        Prepare comprehensive behavioral intelligence prompt for LLM
         
-        prompt = f"""You are a cybersecurity threat analyst. Analyze this threat cluster and provide behavioral insights.
-
-**Threat Cluster Summary:**
-- Source IP: {cluster_data['ip']}
-- Threat Types Detected: {', '.join(cluster_data['threat_types'])}
-- Total Requests: {cluster_data['request_count']}
-- Time Window: {cluster_data['time_window']}
-- Average Anomaly Score: {cluster_data['avg_anomaly_score']}
-- Severity Distribution: {cluster_data['severity_distribution']}
-
-**Sample Attack Requests:**
-"""
-        for i, sample in enumerate(cluster_data['sample_logs'], 1):
-            prompt += f"\n{i}. [{sample['threat_type']}] {sample['method']} {sample['uri']}"
+        Uses structured JSON format for better LLM understanding
+        """
+        cluster_data = cluster.to_structured_dict()
+        cluster_json = json.dumps(cluster_data, indent=2)
         
-        prompt += """
+        prompt = f"""You are a senior cybersecurity threat intelligence analyst.
+Analyze the following clustered security events and provide a detailed behavioral intelligence assessment.
 
-**Analysis Required:**
-1. What attack pattern does this resemble?
-2. Is there a multi-stage attack pattern visible?
-3. Does this indicate automated or manual attack?
-4. What is the likely attacker objective?
-5. Are there any novel or unusual threat patterns?
-6. Risk assessment summary for SOC analysts
+CLUSTER DATA:
+{cluster_json}
 
-Provide concise, actionable insights in 3-4 sentences."""
+Your analysis must include:
+
+1. **Behavioral Pattern Summary**
+   - What type of attack behavior is observed?
+   - Is this reconnaissance, exploitation, lateral movement, or exfiltration?
+
+2. **Attack Progression Analysis**
+   - Does this resemble a multi-stage attack?
+   - Describe the likely sequence of attacker actions.
+
+3. **Attacker Profile Assessment**
+   - Automated bot, scripted attack, or skilled manual attacker?
+   - Level of sophistication (Low / Medium / High).
+
+4. **Impact Assessment**
+   - Potential business impact.
+   - Data exposure risk.
+   - Privilege escalation likelihood.
+
+5. **Campaign Classification**
+   - Is this an APT-style behavior?
+   - Is this an automated scanning campaign?
+   - Is this opportunistic exploitation?
+
+6. **Novel or Emerging Indicators**
+   - Any suspicious pattern not covered by standard rule-based detection?
+   - Suggest if new detection rules should be created.
+
+Respond in structured JSON format:
+{{
+  "behavior_summary": "...",
+  "attack_progression": "...",
+  "attacker_profile": "...",
+  "sophistication_level": "Low|Medium|High",
+  "impact_assessment": "...",
+  "campaign_type": "...",
+  "novel_indicators": "...",
+  "recommendations": "..."
+}}
+
+Do not say "no insights" or "insufficient data". Always provide a full intelligence assessment based on available information."""
         
         return prompt
     
-    def analyze_with_llm(self, cluster: ThreatCluster) -> Optional[Dict[str, Any]]:
+    def analyze_with_llm(self, cluster: ThreatCluster) -> Dict[str, Any]:
         """
-        Send cluster to LLM for behavioral analysis
+        Perform mandatory behavioral intelligence analysis on threat cluster
+        
+        CRITICAL: This ALWAYS returns analysis, never None
         
         Returns:
-            Dictionary with LLM insights or None if disabled/failed
+            Dictionary with comprehensive LLM behavioral intelligence
         """
         if not self.enabled or not self.client:
-            return None
-        
-        try:
-            prompt = self.prepare_llm_payload(cluster)
-            
-            # Azure OpenAI deployment name - MUST match your Azure deployment
-            deployment_name = "gpt-4o-mini"
-            
-            logger.info(f"Calling Azure OpenAI with deployment: {deployment_name}")
-            
-            response = self.client.chat.completions.create(
-                model=deployment_name,  # This is your Azure deployment name
-                messages=[
-                    {"role": "system", "content": "You are a cybersecurity threat intelligence analyst providing behavioral insights on detected threats."},
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=self.max_tokens,
-                temperature=0.3  # Lower temperature for more focused analysis
-            )
-            
-            analysis = response.choices[0].message.content
-            
+            # Return fallback analysis if LLM is disabled
             return {
+                'cluster_id': cluster.cluster_id,
                 'cluster_ip': cluster.ip,
                 'threat_types': cluster.threat_types,
                 'request_count': cluster.request_count,
-                'llm_analysis': analysis,
-                'llm_model': deployment_name,
+                'llm_analysis': 'LLM analysis disabled - API key not configured',
+                'behavior_summary': 'N/A - LLM disabled',
+                'attack_progression': 'N/A - LLM disabled',
+                'attacker_profile': 'N/A - LLM disabled',
+                'sophistication_level': 'Unknown',
+                'impact_assessment': 'N/A - LLM disabled',
+                'campaign_type': 'N/A - LLM disabled',
+                'novel_indicators': 'N/A - LLM disabled',
+                'recommendations': 'Enable LLM for behavioral analysis',
+                'llm_model': 'N/A',
                 'analyzed_at': datetime.now().isoformat()
             }
         
+        try:
+            prompt = self.prepare_behavioral_analysis_prompt(cluster)
+            deployment_name = "gpt-4o-mini"
+            
+            logger.info(f"Analyzing {cluster.cluster_id} with Azure OpenAI ({deployment_name})")
+            
+            response = self.client.chat.completions.create(
+                model=deployment_name,
+                messages=[
+                    {"role": "system", "content": "You are a senior cybersecurity threat intelligence analyst providing comprehensive behavioral analysis on detected threats. Always provide detailed, actionable intelligence."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=self.max_tokens,
+                temperature=0.3
+            )
+            
+            analysis_text = response.choices[0].message.content
+            
+            # Try to parse JSON response
+            try:
+                analysis_json = json.loads(analysis_text)
+                return {
+                    'cluster_id': cluster.cluster_id,
+                    'cluster_ip': cluster.ip,
+                    'threat_types': cluster.threat_types,
+                    'request_count': cluster.request_count,
+                    'llm_analysis': analysis_text,
+                    'behavior_summary': analysis_json.get('behavior_summary', 'N/A'),
+                    'attack_progression': analysis_json.get('attack_progression', 'N/A'),
+                    'attacker_profile': analysis_json.get('attacker_profile', 'N/A'),
+                    'sophistication_level': analysis_json.get('sophistication_level', 'Unknown'),
+                    'impact_assessment': analysis_json.get('impact_assessment', 'N/A'),
+                    'campaign_type': analysis_json.get('campaign_type', 'N/A'),
+                    'novel_indicators': analysis_json.get('novel_indicators', 'None detected'),
+                    'recommendations': analysis_json.get('recommendations', 'Continue monitoring'),
+                    'llm_model': deployment_name,
+                    'analyzed_at': datetime.now().isoformat()
+                }
+            except json.JSONDecodeError:
+                # If LLM doesn't return JSON, use raw text
+                return {
+                    'cluster_id': cluster.cluster_id,
+                    'cluster_ip': cluster.ip,
+                    'threat_types': cluster.threat_types,
+                    'request_count': cluster.request_count,
+                    'llm_analysis': analysis_text,
+                    'behavior_summary': analysis_text[:200] + '...' if len(analysis_text) > 200 else analysis_text,
+                    'attack_progression': 'See full analysis',
+                    'attacker_profile': 'See full analysis',
+                    'sophistication_level': 'Unknown',
+                    'impact_assessment': 'See full analysis',
+                    'campaign_type': 'See full analysis',
+                    'novel_indicators': 'See full analysis',
+                    'recommendations': 'See full analysis',
+                    'llm_model': deployment_name,
+                    'analyzed_at': datetime.now().isoformat()
+                }
+        
         except Exception as e:
-            logger.error(f"LLM analysis failed for cluster {cluster.ip}: {e}")
+            logger.error(f"LLM analysis failed for {cluster.cluster_id}: {e}")
             logger.error(f"Error type: {type(e).__name__}")
-            if hasattr(e, 'response'):
-                logger.error(f"Response: {e.response}")
-            return None
+            
+            # Return error analysis instead of None
+            return {
+                'cluster_id': cluster.cluster_id,
+                'cluster_ip': cluster.ip,
+                'threat_types': cluster.threat_types,
+                'request_count': cluster.request_count,
+                'llm_analysis': f'LLM analysis failed: {str(e)}',
+                'behavior_summary': 'Analysis failed - see error',
+                'attack_progression': 'N/A - analysis error',
+                'attacker_profile': 'N/A - analysis error',
+                'sophistication_level': 'Unknown',
+                'impact_assessment': 'N/A - analysis error',
+                'campaign_type': 'N/A - analysis error',
+                'novel_indicators': 'N/A - analysis error',
+                'recommendations': 'Retry analysis or check LLM configuration',
+                'llm_model': 'gpt-4o-mini',
+                'analyzed_at': datetime.now().isoformat(),
+                'error': str(e)
+            }
+    
+    def enrich_results(self, results: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """
+        MANDATORY behavioral intelligence analysis on ALL high-severity threat clusters
+        
+        CRITICAL: This ALWAYS performs analysis when clusters exist
+        
+        Args:
+            results: List of all detection results
+        
+        Returns:
+            Dictionary with comprehensive LLM behavioral intelligence
+        """
+        if not self.enabled:
+            logger.warning("LLM enrichment disabled - no API key configured")
+            return {
+                'enabled': False,
+                'clusters_analyzed': 0,
+                'llm_insights': [],
+                'message': 'LLM enrichment disabled - configure OPENAI_API_KEY in .env to enable'
+            }
+        
+        logger.info("Starting MANDATORY LLM behavioral intelligence analysis...")
+        
+        # Step 1: Filter high-severity threats (Critical, High, Medium)
+        high_severity_threats = self.filter_high_severity(results)
+        logger.info(f"Filtered {len(high_severity_threats)} high-severity threats for mandatory LLM analysis")
+        
+        if len(high_severity_threats) == 0:
+            logger.info("No high-severity threats detected - LLM analysis not required")
+            return {
+                'enabled': True,
+                'clusters_analyzed': 0,
+                'llm_insights': [],
+                'message': 'No high-severity threats detected'
+            }
+        
+        # Step 2: Cluster threats for analysis
+        clusters = self.cluster_threats(high_severity_threats)
+        logger.info(f"Created {len(clusters)} threat clusters for MANDATORY behavioral analysis")
+        
+        if len(clusters) == 0:
+            logger.warning("No clusters formed from high-severity threats")
+            return {
+                'enabled': True,
+                'clusters_analyzed': 0,
+                'llm_insights': [],
+                'message': 'High-severity threats detected but no clusters formed'
+            }
+        
+        # Step 3: MANDATORY analysis of ALL clusters
+        # CRITICAL: analyze_with_llm ALWAYS returns a result (never None)
+        llm_insights = []
+        for i, cluster in enumerate(clusters, 1):
+            logger.info(f"Analyzing cluster {i}/{len(clusters)}: {cluster.cluster_id} ({cluster.ip})")
+            insight = self.analyze_with_llm(cluster)
+            llm_insights.append(insight)  # Always append (never None)
+        
+        logger.info(f"✓ LLM behavioral intelligence complete: {len(llm_insights)} clusters analyzed")
+        
+        # Step 4: Detect novel patterns (supplementary analysis)
+        novel_patterns = self.detect_novel_patterns(high_severity_threats)
+        if novel_patterns:
+            logger.info(f"Detected {len(novel_patterns)} novel threat patterns")
+        
+        return {
+            'enabled': True,
+            'clusters_analyzed': len(clusters),
+            'llm_insights': llm_insights,  # ALWAYS contains analysis
+            'novel_patterns': novel_patterns[:5],  # Limit to top 5
+            'message': f'Successfully analyzed {len(llm_insights)} threat clusters'
+        }
     
     def detect_novel_patterns(self, threats: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
-        Detect potential novel threat patterns
+        Detect potential novel threat patterns (supplementary analysis)
         
         Criteria: High anomaly score BUT no signature match
         """
@@ -259,67 +463,11 @@ Provide concise, actionable insights in 3-4 sentences."""
             # High ML score but "Other" threat type = potential novel pattern
             if threat['score'] > 0.8 and threat['threat_type'] == 'Other':
                 novel_patterns.append({
-                    'uri': threat['uri'],
+                    'uri': threat.get('uri', 'N/A'),
                     'ip': threat['identifier'],
                     'anomaly_score': threat['score'],
-                    'timestamp': threat['timestamp'],
-                    'detection_layer': threat['detection_layer']
+                    'timestamp': threat.get('timestamp', 'N/A'),
+                    'detection_layer': threat.get('detection_layer', 'Unknown')
                 })
         
         return novel_patterns
-    
-    def enrich_results(self, results: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """
-        Main enrichment function - analyzes high-severity threats with LLM
-        
-        Args:
-            results: List of all detection results
-        
-        Returns:
-            Dictionary with LLM enrichment data
-        """
-        if not self.enabled:
-            return {
-                'enabled': False,
-                'clusters_analyzed': 0,
-                'novel_patterns_detected': 0,
-                'llm_insights': []
-            }
-        
-        logger.info("Starting LLM enrichment analysis...")
-        
-        # Step 1: Filter high-severity threats
-        high_severity_threats = self.filter_high_severity(results)
-        logger.info(f"Filtered {len(high_severity_threats)} high-severity threats for LLM analysis")
-        
-        if len(high_severity_threats) == 0:
-            return {
-                'enabled': True,
-                'clusters_analyzed': 0,
-                'novel_patterns_detected': 0,
-                'llm_insights': []
-            }
-        
-        # Step 2: Cluster threats
-        clusters = self.cluster_threats(high_severity_threats)
-        logger.info(f"Created {len(clusters)} threat clusters")
-        
-        # Step 3: Analyze clusters with LLM
-        llm_insights = []
-        for cluster in clusters:
-            insight = self.analyze_with_llm(cluster)
-            if insight:
-                llm_insights.append(insight)
-        
-        # Step 4: Detect novel patterns
-        novel_patterns = self.detect_novel_patterns(high_severity_threats)
-        
-        logger.info(f"LLM enrichment complete: {len(llm_insights)} clusters analyzed, {len(novel_patterns)} novel patterns detected")
-        
-        return {
-            'enabled': True,
-            'clusters_analyzed': len(clusters),
-            'novel_patterns_detected': len(novel_patterns),
-            'llm_insights': llm_insights,
-            'novel_patterns': novel_patterns[:5]  # Limit to top 5
-        }
