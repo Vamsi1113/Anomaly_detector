@@ -455,6 +455,26 @@
                                                         [{{ result['threat_type'] }}] {{ result['explanation'] }}
                                                     </div>
                                                     
+                                                    <!-- MITRE ATT&CK Mapping -->
+                                                    {% if result.get('mitre_technique') and result['mitre_technique'] != 'N/A' %}
+                                                    <div style="margin-bottom: 8px; padding: 8px; background: #fff3e0; border-left: 3px solid #ff9800; border-radius: 3px;">
+                                                        <div style="font-size: 10px; font-weight: 600; color: #e65100; margin-bottom: 4px;">
+                                                            🎯 MITRE ATT&CK Mapping
+                                                        </div>
+                                                        <div style="display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px;">
+                                                            <span class="mitre-badge mitre-technique">{{ result['mitre_technique'] }}</span>
+                                                            <span class="mitre-badge mitre-tactic">{{ result['mitre_tactic'] }}</span>
+                                                            <span class="mitre-badge mitre-stage">{{ result['attack_stage'] }}</span>
+                                                        </div>
+                                                        <div style="font-size: 10px; color: #666; line-height: 1.4;">
+                                                            <strong>{{ result['mitre_technique_name'] }}</strong>
+                                                            {% if result.get('mitre_description') %}
+                                                            <br>{{ result['mitre_description'] }}
+                                                            {% endif %}
+                                                        </div>
+                                                    </div>
+                                                    {% endif %}
+                                                    
                                                     {% if result.get('confidence') and result['confidence'] > 0 %}
                                                     <div style="margin-bottom: 6px;">
                                                         <span style="background: #e3f2fd; padding: 2px 8px; border-radius: 3px; font-size: 10px; font-weight: 600;">

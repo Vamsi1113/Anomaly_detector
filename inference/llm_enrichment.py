@@ -212,35 +212,61 @@ class LLMEnrichmentService:
     
     def prepare_behavioral_analysis_prompt(self, cluster: ThreatCluster) -> str:
         """
-        Prepare comprehensive behavioral intelligence prompt for LLM
+        Prepare comprehensive behavioral intelligence prompt for LLM with MITRE context
         
         Uses structured JSON format for better LLM understanding
         """
         cluster_data = cluster.to_structured_dict()
+        
+        # Add MITRE ATT&CK context for each threat type
+        mitre_context = []
+        for threat in cluster.threats:
+            threat_type = threat.get('threat_type', 'Unknown')
+            mitre_technique = threat.get('mitre_technique', 'N/A')
+            mitre_tactic = threat.get('mitre_tactic', 'N/A')
+            attack_stage = threat.get('attack_stage', 'Unknown')
+            
+            if mitre_technique != 'N/A':
+                mitre_context.append({
+                    'threat_type': threat_type,
+                    'mitre_technique': mitre_technique,
+                    'mitre_tactic': mitre_tactic,
+                    'attack_stage': attack_stage
+                })
+        
+        # Remove duplicates
+        unique_mitre = {m['threat_type']: m for m in mitre_context}.values()
+        cluster_data['mitre_context'] = list(unique_mitre)
+        
         cluster_json = json.dumps(cluster_data, indent=2)
         
         prompt = f"""You are a senior cybersecurity threat intelligence analyst.
 Analyze the following clustered security events and provide a detailed behavioral intelligence assessment.
 
-CLUSTER DATA:
+CLUSTER DATA (with MITRE ATT&CK context):
 {cluster_json}
+
+IMPORTANT: Use the MITRE ATT&CK context provided to inform your analysis. The techniques, tactics, and attack stages are already mapped.
 
 Your analysis must include:
 
 1. **Behavioral Pattern Summary**
    - What type of attack behavior is observed?
+   - Reference the MITRE tactics and attack stages provided.
    - Is this reconnaissance, exploitation, lateral movement, or exfiltration?
 
 2. **Attack Progression Analysis**
    - Does this resemble a multi-stage attack?
-   - Describe the likely sequence of attacker actions.
+   - Describe the likely sequence of attacker actions using the MITRE kill chain.
+   - Reference specific MITRE techniques observed.
 
 3. **Attacker Profile Assessment**
    - Automated bot, scripted attack, or skilled manual attacker?
    - Level of sophistication (Low / Medium / High).
+   - Consider the complexity of MITRE techniques used.
 
 4. **Impact Assessment**
-   - Potential business impact.
+   - Potential business impact based on MITRE tactics.
    - Data exposure risk.
    - Privilege escalation likelihood.
 
@@ -248,10 +274,12 @@ Your analysis must include:
    - Is this an APT-style behavior?
    - Is this an automated scanning campaign?
    - Is this opportunistic exploitation?
+   - Reference MITRE ATT&CK framework patterns.
 
 6. **Novel or Emerging Indicators**
    - Any suspicious pattern not covered by standard rule-based detection?
    - Suggest if new detection rules should be created.
+   - Consider if this represents a new TTP (Tactics, Techniques, Procedures).
 
 Respond in structured JSON format:
 {{

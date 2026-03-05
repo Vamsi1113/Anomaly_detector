@@ -1,12 +1,14 @@
 """
 Decision Engine - Layer 4
-Signal aggregation and final risk scoring
+Enhanced signal aggregation with MITRE ATT&CK mapping and false positive reduction
 """
 import numpy as np
 from typing import Dict, Any
 from dataclasses import dataclass
 from enum import Enum
 import logging
+from inference.mitre_attack_mapper import MITREAttackMapper
+from inference.false_positive_filter import FalsePositiveFilter
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +23,7 @@ class AnomalySeverity(Enum):
 
 @dataclass
 class UnifiedThreat:
-    """Unified threat result from decision engine"""
+    """Unified threat result from decision engine with MITRE ATT&CK mapping"""
     record_index: int
     identifier: str
     timestamp: str
@@ -40,14 +42,21 @@ class UnifiedThreat:
     detection_layer: str
     explanation: str
     
+    # MITRE ATT&CK mapping
+    mitre_technique: str = "N/A"
+    mitre_technique_name: str = "N/A"
+    mitre_tactic: str = "N/A"
+    attack_stage: str = "Unknown"
+    mitre_description: str = ""
+    
     # Record details
-    uri: str
-    status_code: int
-    method: str
-    duration: int
-    response_size: int
-    user_agent: str
-    referer: str
+    uri: str = ""
+    status_code: int = 0
+    method: str = ""
+    duration: int = 0
+    response_size: int = 0
+    user_agent: str = ""
+    referer: str = ""
     raw_log: str = ""  # Original raw log entry
     
     def to_dict(self):
@@ -61,6 +70,11 @@ class UnifiedThreat:
             'confidence': max(self.signature_confidence, self.behavior_confidence),
             'detection_layer': self.detection_layer,
             'explanation': self.explanation,
+            'mitre_technique': self.mitre_technique,
+            'mitre_technique_name': self.mitre_technique_name,
+            'mitre_tactic': self.mitre_tactic,
+            'attack_stage': self.attack_stage,
+            'mitre_description': self.mitre_description,
             'uri': self.uri,
             'status_code': self.status_code,
             'method': self.method,
@@ -74,18 +88,18 @@ class UnifiedThreat:
 
 
 class DecisionEngine:
-    """Layer 4: Signal aggregation and risk scoring"""
+    """Layer 4: Enhanced signal aggregation with MITRE mapping and FP reduction"""
     
-    # Weights for signal aggregation
-    SIGNATURE_WEIGHT = 0.5
-    BEHAVIOR_WEIGHT = 0.2
-    ML_WEIGHT = 0.3
+    # IMPROVED WEIGHTS: Prioritize deterministic detection
+    SIGNATURE_WEIGHT = 0.5  # Deterministic rules (highest priority)
+    BEHAVIOR_WEIGHT = 0.3   # Stateful analysis (increased from 0.2)
+    ML_WEIGHT = 0.2         # Statistical anomaly (decreased from 0.3)
     
-    # Severity thresholds (original values - kept for accurate classification)
+    # STRICTER THRESHOLDS: Reduce false positives
     CRITICAL_THRESHOLD = 0.90
     HIGH_THRESHOLD = 0.75
     MEDIUM_THRESHOLD = 0.60
-    LOW_THRESHOLD = 0.40
+    LOW_THRESHOLD = 0.45     # Increased from 0.40
     
     # Critical threat types that must be HIGH or above
     CRITICAL_THREAT_TYPES = [
@@ -98,6 +112,9 @@ class DecisionEngine:
     
     def __init__(self):
         self.decision_count = 0
+        self.fp_filter = FalsePositiveFilter()
+        self.mitre_mapper = MITREAttackMapper()
+        self.filtered_count = 0
     
     def make_decision(
         self,
@@ -109,7 +126,7 @@ class DecisionEngine:
         ml_score_normalized: float
     ) -> UnifiedThreat:
         """
-        Aggregate signals and make final threat decision
+        Enhanced threat decision with MITRE mapping and false positive reduction
         
         Args:
             record: Original log record
@@ -120,7 +137,7 @@ class DecisionEngine:
             ml_score_normalized: Normalized ML score (0-1)
         
         Returns:
-            UnifiedThreat with final decision
+            UnifiedThreat with final decision and MITRE mapping
         """
         # Extract record details
         identifier = getattr(record, 'client_ip', getattr(record, 'identifier', ''))
@@ -138,13 +155,6 @@ class DecisionEngine:
         behav_confidence = behavior_result.behavior_confidence
         ml_confidence = ml_score_normalized
         
-        # Calculate weighted risk score
-        final_risk_score = (
-            sig_confidence * self.SIGNATURE_WEIGHT +
-            behav_confidence * self.BEHAVIOR_WEIGHT +
-            ml_confidence * self.ML_WEIGHT
-        )
-        
         # Determine primary threat type and detection layer
         if signature_result.signature_flag:
             final_threat_type = signature_result.threat_type
@@ -159,6 +169,40 @@ class DecisionEngine:
             detection_layer = "Layer 3: ML Anomaly Detection"
             primary_confidence = ml_confidence
         
+        # FALSE POSITIVE FILTERING
+        should_filter, filter_reason = self.fp_filter.should_filter(
+            threat_type=final_threat_type,
+            uri=uri,
+            user_agent=user_agent,
+            client_ip=identifier,
+            signature_flag=signature_result.signature_flag,
+            behavior_flag=behavior_result.behavior_flag,
+            ml_score=ml_score_normalized
+        )
+        
+        if should_filter:
+            self.filtered_count += 1
+            logger.debug(f"Filtered false positive: {filter_reason}")
+            # Return as normal (filtered out)
+            return self._create_normal_result(
+                record_index, identifier, timestamp, uri, status_code,
+                method, duration, response_size, user_agent, referer, record
+            )
+        
+        # Calculate base weighted risk score
+        base_risk_score = (
+            sig_confidence * self.SIGNATURE_WEIGHT +
+            behav_confidence * self.BEHAVIOR_WEIGHT +
+            ml_confidence * self.ML_WEIGHT
+        )
+        
+        # Apply MITRE severity modifier
+        mitre_modifier = self.mitre_mapper.get_severity_modifier(final_threat_type)
+        final_risk_score = base_risk_score * mitre_modifier
+        
+        # Ensure risk score stays in valid range
+        final_risk_score = min(1.0, max(0.0, final_risk_score))
+        
         # Map risk score to severity
         final_severity = self._map_risk_to_severity(final_risk_score)
         
@@ -172,6 +216,9 @@ class DecisionEngine:
         if (signature_result.signature_flag or behavior_result.behavior_flag) and final_severity == AnomalySeverity.NORMAL.value:
             final_severity = AnomalySeverity.LOW.value
             logger.debug(f"Upgraded to LOW severity due to detection flag")
+        
+        # Get MITRE ATT&CK mapping
+        mitre_mapping = self.mitre_mapper.get_mapping(final_threat_type)
         
         # Generate explanation
         explanation = self._generate_explanation(
@@ -204,6 +251,11 @@ class DecisionEngine:
             anomaly_score=ml_score,
             detection_layer=detection_layer,
             explanation=explanation,
+            mitre_technique=mitre_mapping.technique_id if mitre_mapping else "N/A",
+            mitre_technique_name=mitre_mapping.technique_name if mitre_mapping else "N/A",
+            mitre_tactic=mitre_mapping.tactic if mitre_mapping else "N/A",
+            attack_stage=mitre_mapping.attack_stage if mitre_mapping else "Unknown",
+            mitre_description=mitre_mapping.description if mitre_mapping else "",
             uri=uri,
             status_code=status_code,
             method=method,
@@ -213,6 +265,58 @@ class DecisionEngine:
             referer=referer,
             raw_log=raw_log
         )
+    
+    def _create_normal_result(
+        self,
+        record_index: int,
+        identifier: str,
+        timestamp: str,
+        uri: str,
+        status_code: int,
+        method: str,
+        duration: int,
+        response_size: int,
+        user_agent: str,
+        referer: str,
+        record
+    ) -> UnifiedThreat:
+        """Create a normal (non-threat) result"""
+        return UnifiedThreat(
+            record_index=record_index,
+            identifier=identifier,
+            timestamp=timestamp,
+            final_threat_type="Normal",
+            final_severity=AnomalySeverity.NORMAL.value,
+            final_risk_score=0.0,
+            signature_confidence=0.0,
+            behavior_confidence=0.0,
+            anomaly_score=0.0,
+            detection_layer="Filtered",
+            explanation="Normal request (filtered)",
+            mitre_technique="N/A",
+            mitre_technique_name="N/A",
+            mitre_tactic="N/A",
+            attack_stage="N/A",
+            mitre_description="",
+            uri=uri,
+            status_code=status_code,
+            method=method,
+            duration=duration,
+            response_size=response_size,
+            user_agent=user_agent,
+            referer=referer,
+            raw_log=self._reconstruct_raw_log(record)
+        )
+    
+    def get_statistics(self) -> Dict:
+        """Get decision engine statistics"""
+        fp_stats = self.fp_filter.get_statistics()
+        return {
+            'total_decisions': self.decision_count,
+            'filtered_false_positives': self.filtered_count,
+            'false_positive_rate': self.filtered_count / max(1, self.decision_count + self.filtered_count),
+            **fp_stats
+        }
     
     def _map_risk_to_severity(self, risk_score: float) -> str:
         """Map risk score to severity level (original thresholds)"""

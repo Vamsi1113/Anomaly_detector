@@ -795,6 +795,32 @@ input[type="file"] {
     }
 }
 
+/* MITRE ATT&CK Badges */
+.mitre-badge {
+    display: inline-block;
+    padding: 3px 8px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+.mitre-technique {
+    background: #1976d2;
+    color: white;
+}
+
+.mitre-tactic {
+    background: #7b1fa2;
+    color: white;
+}
+
+.mitre-stage {
+    background: #d84315;
+    color: white;
+}
+
 /* Scrollbar styling */
 ::-webkit-scrollbar {
     width: 8px;
