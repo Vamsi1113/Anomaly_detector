@@ -11,7 +11,8 @@ from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
-load_dotenv()
+# override=True ensures .env values take precedence over system environment
+load_dotenv(override=True)
 
 from config import (
     FLASK_CONFIG,

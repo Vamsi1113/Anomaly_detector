@@ -142,7 +142,8 @@ class LLMEnrichmentService:
         if self.enabled and self.api_key:
             try:
                 # Azure OpenAI configuration using OpenAI client with custom base_url
-                endpoint = "https://rhea-mm1vfuyh-eastus2.cognitiveservices.azure.com/openai/v1/"
+                # Read endpoint from environment or use default
+                endpoint = os.getenv('OPENAI_BASE_URL', 'https://rhea-mm1vfuyh-eastus2.cognitiveservices.azure.com/openai/v1/')
                 self.client = OpenAI(
                     base_url=endpoint,
                     api_key=self.api_key
@@ -315,9 +316,19 @@ Do not say "no insights" or "insufficient data". Always provide a full intellige
             
             analysis_text = response.choices[0].message.content
             
+            # Clean up markdown code blocks if present
+            cleaned_text = analysis_text.strip()
+            if cleaned_text.startswith('```json'):
+                cleaned_text = cleaned_text[7:]  # Remove ```json
+            if cleaned_text.startswith('```'):
+                cleaned_text = cleaned_text[3:]  # Remove ```
+            if cleaned_text.endswith('```'):
+                cleaned_text = cleaned_text[:-3]  # Remove trailing ```
+            cleaned_text = cleaned_text.strip()
+            
             # Try to parse JSON response
             try:
-                analysis_json = json.loads(analysis_text)
+                analysis_json = json.loads(cleaned_text)
                 return {
                     'cluster_id': cluster.cluster_id,
                     'cluster_ip': cluster.ip,
@@ -343,7 +354,7 @@ Do not say "no insights" or "insufficient data". Always provide a full intellige
                     'threat_types': cluster.threat_types,
                     'request_count': cluster.request_count,
                     'llm_analysis': analysis_text,
-                    'behavior_summary': analysis_text[:200] + '...' if len(analysis_text) > 200 else analysis_text,
+                    'behavior_summary': analysis_text[:500] if len(analysis_text) > 500 else analysis_text,
                     'attack_progression': 'See full analysis',
                     'attacker_profile': 'See full analysis',
                     'sophistication_level': 'Unknown',

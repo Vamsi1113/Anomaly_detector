@@ -48,6 +48,7 @@ class UnifiedThreat:
     response_size: int
     user_agent: str
     referer: str
+    raw_log: str = ""  # Original raw log entry
     
     def to_dict(self):
         return {
@@ -67,6 +68,7 @@ class UnifiedThreat:
             'response_size': self.response_size,
             'user_agent': self.user_agent,
             'referer': self.referer,
+            'raw_log': self.raw_log,
             'model': 'decision_engine'
         }
 
@@ -183,6 +185,9 @@ class DecisionEngine:
             record
         )
         
+        # Reconstruct raw log entry
+        raw_log = self._reconstruct_raw_log(record)
+        
         # Count non-normal detections
         if final_severity != AnomalySeverity.NORMAL.value:
             self.decision_count += 1
@@ -205,7 +210,8 @@ class DecisionEngine:
             duration=duration,
             response_size=response_size,
             user_agent=user_agent,
-            referer=referer
+            referer=referer,
+            raw_log=raw_log
         )
     
     def _map_risk_to_severity(self, risk_score: float) -> str:
@@ -276,3 +282,67 @@ class DecisionEngine:
             parts.append(f"{duration}ms")
         
         return "; ".join(parts)
+
+    
+    def _reconstruct_raw_log(self, record) -> str:
+        """
+        Reconstruct the original raw log entry from HTTPRecord
+        
+        Args:
+            record: HTTPRecord or GenericRecord
+        
+        Returns:
+            Reconstructed raw log entry in syslog format
+        """
+        try:
+            # Check if it's an HTTPRecord
+            if hasattr(record, 'client_ip') and hasattr(record, 'method'):
+                # Extract fields
+                timestamp = getattr(record, 'timestamp', '')
+                client_ip = getattr(record, 'client_ip', '0.0.0.0')
+                method = getattr(record, 'method', 'GET')
+                uri = getattr(record, 'uri', '/')
+                status_code = getattr(record, 'status_code', 200)
+                response_size = getattr(record, 'response_size', 0)
+                duration = getattr(record, 'duration', 0)
+                user_agent = getattr(record, 'user_agent', 'Unknown')
+                
+                # Get additional fields from raw_row if available
+                raw_row = getattr(record, 'raw_row', {})
+                hostname = raw_row.get('hostname', 'server')
+                process = raw_row.get('process', 'httpd[12345]')
+                dest_ip = raw_row.get('dest_ip', '0.0.0.0')
+                port = raw_row.get('port', '0')
+                domain = raw_row.get('domain', '-')
+                referer = raw_row.get('referer', '-')
+                
+                # Reconstruct syslog format
+                # <priority>timestamp hostname process: src_ip dest_ip port domain - - [timestamp] "METHOD /uri HTTP/1.1" status size duration "referer" "user-agent"
+                
+                # Determine priority (150 for most logs)
+                priority = 150
+                
+                # Get current date for syslog timestamp (simplified)
+                import datetime
+                now = datetime.datetime.now()
+                syslog_timestamp = now.strftime("%b %d %H:%M:%S")
+                
+                # Build the raw log
+                if port and port != '0' and domain and domain != '-':
+                    # Full format with port and domain
+                    raw_log = f'<{priority}>{syslog_timestamp} {hostname} {process}: {client_ip} {dest_ip} {port} {domain} - - [{timestamp}] "{method} {uri} HTTP/1.1" {status_code} {response_size} {duration} "{referer}" "{user_agent}"'
+                elif domain and domain != '-':
+                    # Format with domain but no port
+                    raw_log = f'<{priority}>{syslog_timestamp} {hostname} {process}: {client_ip} {dest_ip} - - [{timestamp}] "{method} {uri} HTTP/1.1" {status_code} {response_size} {duration} "{referer}" "{user_agent}"'
+                else:
+                    # Minimal format
+                    raw_log = f'<{priority}>{syslog_timestamp} {hostname} {process}: {client_ip} - - [{timestamp}] "{method} {uri} HTTP/1.1" {status_code} {response_size} {duration} "{referer}" "{user_agent}"'
+                
+                return raw_log
+            else:
+                # Generic record - return simple representation
+                return f"Record: {getattr(record, 'identifier', 'Unknown')} at {getattr(record, 'timestamp', 'Unknown')}"
+        
+        except Exception as e:
+            logger.warning(f"Failed to reconstruct raw log: {e}")
+            return f"[Raw log reconstruction failed: {str(e)}]"

@@ -52,6 +52,7 @@ class AnomalyResult:
     response_size: int = 0
     user_agent: str = ""
     referer: str = ""
+    raw_log: str = ""  # Original raw log entry
     
     def to_dict(self):
         return {
@@ -72,6 +73,7 @@ class AnomalyResult:
             'response_size': self.response_size,
             'user_agent': self.user_agent,
             'referer': self.referer,
+            'raw_log': self.raw_log,
         }
 
 
@@ -210,7 +212,8 @@ class AnomalyDetectionEngine:
                     duration=unified.duration,
                     response_size=unified.response_size,
                     user_agent=unified.user_agent,
-                    referer=unified.referer
+                    referer=unified.referer,
+                    raw_log=unified.raw_log
                 )
                 legacy_results.append(legacy_result)
         

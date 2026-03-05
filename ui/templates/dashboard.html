@@ -503,6 +503,13 @@
                                                         
                                                         <div style="margin-top: 4px;"><strong>Model:</strong> {{ result['model'].replace('_', ' ').title() }}</div>
                                                     </div>
+                                                    
+                                                    {% if result.get('raw_log') and result['raw_log'] %}
+                                                    <div style="background: #263238; color: #aed581; padding: 10px; border-radius: 4px; margin-top: 8px; font-family: 'Courier New', monospace; font-size: 10px; overflow-x: auto; border-left: 4px solid #ff5722;">
+                                                        <div style="color: #90a4ae; font-size: 9px; font-weight: 600; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px;">📋 Raw Log Entry:</div>
+                                                        <div style="white-space: pre-wrap; word-break: break-all; line-height: 1.5;">{{ result['raw_log'] }}</div>
+                                                    </div>
+                                                    {% endif %}
                                                 </div>
                                             </td>
                                         </tr>

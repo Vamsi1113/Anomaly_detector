@@ -201,19 +201,39 @@ class SyslogParser:
                 content = f.read()
             
             # Preprocessing: Normalize log entries
-            # 1. Replace escaped quotes with regular quotes
+            # 1. Replace escaped quotes and backslashes
             content = content.replace('\\"', '"')
             content = content.replace('""', '"')
+            content = content.replace('\\GET', 'GET')
+            content = content.replace('\\POST', 'POST')
+            content = content.replace('\\PUT', 'PUT')
+            content = content.replace('\\DELETE', 'DELETE')
+            content = content.replace('\\PATCH', 'PATCH')
+            content = content.replace('\\HEAD', 'HEAD')
+            content = content.replace('\\OPTIONS', 'OPTIONS')
+            content = content.replace('HTTP/1.1\\', 'HTTP/1.1')
+            content = content.replace('HTTP/1.0\\', 'HTTP/1.0')
+            content = content.replace('HTTP/2.0\\', 'HTTP/2.0')
             
-            # 2. Normalize multiple spaces to single space
-            content = re.sub(r'\s+', ' ', content)
+            # 2. Convert literal \n to actual newlines (for files with escaped newlines)
+            content = content.replace(',\\n', '\n')
+            content = content.replace('\\n', '\n')
+            content = content.replace(',\n', '\n')
             
-            # Split by syslog entry start pattern (any priority number, not just 150)
-            # This handles cases where multiple entries are on the same line
-            log_entries = re.split(r'(?=<\d+>[A-Za-z]{3}\s+\d+\s+\d+:\d+:\d+)', content)
+            # 3. Normalize multiple spaces to single space (but preserve newlines)
+            lines = content.split('\n')
+            lines = [re.sub(r'[ \t]+', ' ', line.strip()) for line in lines if line.strip()]
+            content = '\n'.join(lines)
             
-            # Filter out empty entries
-            log_entries = [e.strip() for e in log_entries if e.strip()]
+            # Split by syslog entry start pattern OR by newlines
+            # First try splitting by newlines (for properly formatted files)
+            if '\n' in content:
+                log_entries = [line.strip() for line in content.split('\n') if line.strip() and '<' in line]
+            else:
+                # Fallback: split by syslog pattern (for single-line files)
+                log_entries = re.split(r'(?=<\d+>[A-Za-z]{3}\s+\d+\s+\d+:\d+:\d+)', content)
+                log_entries = [e.strip() for e in log_entries if e.strip()]
+            
             total_entries = len(log_entries)
             logger.info(f"Found {total_entries} log entries to parse")
             
@@ -226,31 +246,32 @@ class SyslogParser:
                 try:
                     # Pattern 1: Full format with port and domain
                     # <150>Jan 28 08:59:59 servernameabc httpd[12345]: 0.0.0.0 0.1.0.1 12345 abc.example.net - - [timestamp] "GET /uri HTTP/1.1" 200 size duration "ref" "ua"
+                    # Handles both [28/Jan/2026:12:40:35 +0530] and [28/Jan/2026:12:40:35 0530]
                     pattern1 = re.compile(
                         r'<\d+>(?P<syslog_timestamp>[A-Za-z]{3}\s+\d+\s+\d+:\d+:\d+)\s+'
                         r'(?P<hostname>\S+)\s+(?P<process>\S+):\s+'
                         r'(?P<source_ip>[\d\.]+)\s+(?P<dest_ip>[\d\.]+)\s+'
                         r'(?P<port>\d+)\s+(?P<domain>\S+)\s+'
                         r'[^\[]*\[(?P<timestamp>[^\]]+)\]\s+'
-                        r'"+(?P<method>[A-Z]+)\s+(?P<uri>.+?)\s+HTTP/[\d\.]+"+\s+'
+                        r'(?P<method>[A-Z]+)\s+(?P<uri>.+?)\s+HTTP/[\d\.]+\s+'
                         r'(?P<status_code>\d+)\s+(?P<response_size>[\d\-]+)\s+(?P<duration>[\d\-]+)'
-                        r'(?:\s+"+(?P<referer>[^"]*?)"+)?'
-                        r'(?:\s+"+(?P<user_agent>[^"]*?)"+)?'
+                        r'(?:\s+(?P<referer>\S+))?'
+                        r'(?:\s+(?P<user_agent>.+?))?$'
                     )
                     
                     # Pattern 2: Format without port (has - - instead)
                     # <150>Jan 28 08:59:59 servernameabc httpd[12345]: 0.0.0.0 0.1.0.1 - - [timestamp] "POST /uri HTTP/1.1" 200 size duration
+                    # Also handles: IP1 IP2 - - [timestamp] or IP - - [timestamp]
                     pattern2 = re.compile(
                         r'<\d+>(?P<syslog_timestamp>[A-Za-z]{3}\s+\d+\s+\d+:\d+:\d+)\s+'
                         r'(?P<hostname>\S+)\s+(?P<process>\S+):\s+'
-                        r'(?P<source_ip>[\d\.]+)\s+(?P<dest_ip>[\d\.]+)\s+'
+                        r'(?P<source_ip>[\d\.]+)(?:\s+(?P<dest_ip>[\d\.]+))?\s+'
                         r'-\s+-\s+'
                         r'\[(?P<timestamp>[^\]]+)\]\s+'
-                        r'"+(?P<method>[A-Z]+)\s+(?P<uri>.+?)\s+HTTP/[\d\.]+"+\s+'
+                        r'(?P<method>[A-Z]+)\s+(?P<uri>.+?)\s+HTTP/[\d\.]+\s+'
                         r'(?P<status_code>\d+)\s+(?P<response_size>[\d\-]+)(?:\s+(?P<duration>[\d\-]+))?'
-                        r'(?:\s+"+(?P<referer>[^"]*?)"+)?'
-                        r'(?:\s+"+(?P<user_agent>[^"]*?)"+)?'
-                        r'(?:\s+\d+)?'
+                        r'(?:\s+(?P<referer>\S+))?'
+                        r'(?:\s+(?P<user_agent>.+?))?$'
                     )
                     
                     # Pattern 3: Format with port number instead of dash
@@ -287,10 +308,10 @@ class SyslogParser:
                         r'(?P<hostname>\S+)\s+(?P<process>\S+):\s+'
                         r'(?P<source_ip>[\d\.]+)\s+-\s+-\s+-\s+'
                         r'\[(?P<timestamp>[^\]]+)\]\s+'
-                        r'"+(?P<method>[A-Z]+)\s+(?P<uri>.+?)\s+HTTP/[\d\.]+"+\s+'
-                        r'(?P<status_code>\d+)\s+(?P<response_size>[\d\-]+)(?:\s+(?P<duration>[\d\-]+))?'
-                        r'(?:\s+"+(?P<referer>[^"]*?)"+)?'
-                        r'(?:\s+"+(?P<user_agent>[^"]*?)"+)?'
+                        r'(?P<method>[A-Z]+)\s+(?P<uri>.+?)\s+HTTP/[\d\.]+\s+'
+                        r'(?P<status_code>\d+)\s+(?P<response_size>[\d\-]+)(?:\s+(?P<duration>[\d\-]+))?(?:\s+(?P<extra>\d+))?'
+                        r'(?:\s+(?P<referer>\S+))?'
+                        r'(?:\s+(?P<user_agent>.+?))?$'
                     )
                     
                     # Pattern 6: Minimal format with 4 dashes (IP - - - - [timestamp])
@@ -328,10 +349,10 @@ class SyslogParser:
                         r'(?P<source_ip>[\d\.]+)\s+(?P<dest_ip>[\d\.]+)\s+'
                         r'(?P<port>\d+)\s+(?P<domain>\S+)\s+'
                         r'--\[(?P<timestamp>[^\]]+)\]\s+'
-                        r'"+(?P<method>[A-Z]+)\s+(?P<uri>.+?)\s+HTTP/[\d\.]+"+\s+'
-                        r'(?P<status_code>\d+)\s+(?P<response_size>[\d\-]+)(?:\s+(?P<duration>[\d\-]+))?'
-                        r'(?:\s+"+(?P<referer>[^"]*?)"+)?'
-                        r'(?:\s+"+(?P<user_agent>[^"]*?)"+)?'
+                        r'(?P<method>[A-Z]+)\s+(?P<uri>.+?)\s+HTTP/[\d\.]+\s+'
+                        r'(?P<status_code>\d+)\s+(?P<response_size>[\d\-]+)'
+                        r'(?:\s+(?P<referer>\S+))?'
+                        r'(?:\s+(?P<user_agent>.+?))?$'
                     )
                     
                     # Pattern 9: Format with trailing -- 0 @ number --
@@ -362,7 +383,7 @@ class SyslogParser:
                     
                     # Try all patterns (specific patterns first, fallback last)
                     match = None
-                    for pattern in [pattern1, pattern2, pattern3, pattern4, pattern5, pattern6, pattern7, pattern8, pattern9, pattern10]:
+                    for pattern in [pattern8, pattern1, pattern2, pattern3, pattern4, pattern5, pattern6, pattern7, pattern9, pattern10]:
                         match = pattern.search(log_line)
                         if match:
                             break
