@@ -174,7 +174,8 @@ class LLMEnrichmentService:
         
         # Group by IP and threat type
         for threat in threats:
-            ip = threat['identifier']
+            # Handle both regular threats and campaign events
+            ip = threat.get('identifier') or threat.get('ip', 'unknown')
             threat_type = threat['threat_type']
             clusters_by_ip[ip][threat_type].append(threat)
         
@@ -503,7 +504,7 @@ Do not say "no insights" or "insufficient data". Always provide a full intellige
             if threat['score'] > 0.8 and threat['threat_type'] == 'Other':
                 novel_patterns.append({
                     'uri': threat.get('uri', 'N/A'),
-                    'ip': threat['identifier'],
+                    'ip': threat.get('identifier') or threat.get('ip', 'unknown'),
                     'anomaly_score': threat['score'],
                     'timestamp': threat.get('timestamp', 'N/A'),
                     'detection_layer': threat.get('detection_layer', 'Unknown')

@@ -408,6 +408,50 @@
                                 </div>
                             </div>
                             {% endif %}
+                            
+                            <!-- Threat Graph Campaigns (Layer 5 - Used for Filtering) -->
+                            {% if stats.get('threat_graph') and stats['threat_graph'].get('campaigns') and stats['threat_graph']['campaigns']|length > 0 %}
+                            <div style="margin-top: 20px; padding: 12px; background: #e8f5e9; border: 2px solid #4caf50; border-radius: 6px;">
+                                <div style="font-weight: 600; margin-bottom: 8px; color: #2e7d32;">
+                                    ✅ Threat Graph Analysis (Used for False Positive Filtering)
+                                </div>
+                                <div style="font-size: 10px; color: #2e7d32; margin-bottom: 8px;">
+                                    <div><strong>Attack Campaigns Detected:</strong> {{ stats['threat_graph']['campaigns']|length }}</div>
+                                    <div><strong>Graph Nodes:</strong> {{ stats['threat_graph']['statistics']['total_nodes'] }}</div>
+                                    <div><strong>Graph Clusters:</strong> {{ stats['threat_graph']['statistics']['total_clusters'] }}</div>
+                                    <div style="font-style: italic; margin-top: 4px; background: white; padding: 6px; border-radius: 3px;">
+                                        📊 Analysis: {{ stats['threat_graph']['statistics']['total_nodes'] }} threats → {{ stats['threat_graph']['statistics']['total_clusters'] }} clusters → {{ stats['threat_graph']['campaigns']|length }} campaigns
+                                        <br>✅ Result: Showing only threats that are part of attack campaigns (high confidence)
+                                    </div>
+                                </div>
+                                
+                                <div style="font-weight: 600; margin-top: 10px; margin-bottom: 6px; color: #1b5e20;">
+                                    Detected Attack Campaigns:
+                                </div>
+                                {% for campaign in stats['threat_graph']['campaigns'] %}
+                                    <div style="padding: 8px; background: white; border-radius: 4px; margin-bottom: 6px; border-left: 4px solid {% if campaign['severity'] == 'critical' %}#721c24{% elif campaign['severity'] == 'high' %}#dc3545{% elif campaign['severity'] == 'medium' %}#fd7e14{% else %}#ffc107{% endif %};">
+                                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                                            <div style="font-weight: 600; color: #d32f2f; font-size: 11px;">
+                                                {{ campaign['campaign_id'] }}: {{ campaign['type'] }}
+                                            </div>
+                                            <span class="severity-badge {{ campaign['severity'] }}" style="font-size: 9px; padding: 2px 6px;">{{ campaign['severity'] }}</span>
+                                        </div>
+                                        
+                                        <div style="font-size: 9px; color: #666; margin-bottom: 4px;">
+                                            <strong>IP:</strong> {{ campaign['ip'] }} | 
+                                            <strong>Events:</strong> {{ campaign['event_count'] }} | 
+                                            <strong>Score:</strong> {{ "%.2f"|format(campaign['score']) }}
+                                        </div>
+                                        
+                                        {% if campaign.get('threat_types') %}
+                                        <div style="font-size: 9px; color: #555;">
+                                            <strong>Threats:</strong> {{ campaign['threat_types']|join(', ') }}
+                                        </div>
+                                        {% endif %}
+                                    </div>
+                                {% endfor %}
+                            </div>
+                            {% endif %}
                         </div>
                     {% else %}
                         <div class="panel-header">📊 Dashboard</div>
@@ -421,8 +465,15 @@
             <!-- Results Table -->
             {% if session_data.get('results') %}
                 <div style="margin-top: 15px;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-                        <h3 style="margin: 0; font-size: 16px;">🔎 Detection Results</h3>
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; flex-wrap: wrap; gap: 10px;">
+                        <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                            <h3 style="margin: 0; font-size: 16px;">🔎 Detection Results</h3>
+                            {% if stats.get('threat_graph') and stats['threat_graph'].get('used_for_filtering') %}
+                            <div style="background: #4caf50; color: white; padding: 4px 12px; border-radius: 4px; font-size: 11px; font-weight: 600;">
+                                ✅ Filtered using {{ stats['threat_graph']['campaigns']|length }} campaigns
+                            </div>
+                            {% endif %}
+                        </div>
                         <div style="display: flex; gap: 6px; flex-wrap: wrap;">
                             <button class="btn btn-secondary" onclick="filterBySeverity('all')" style="padding: 4px 10px; font-size: 11px;">All</button>
                             <button class="btn btn-secondary" onclick="filterBySeverity('critical')" style="padding: 4px 10px; font-size: 11px; background-color: #721c24;">Critical</button>
